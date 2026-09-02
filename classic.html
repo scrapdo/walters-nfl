@@ -77,14 +77,16 @@ const PV = {1:3,2:3,3:8,4:3,5:3,6:5,7:6,8:3,9:2,10:4,11:2,12:2,13:2,14:5,15:2,16
 
 function calcStars(myLine, posted) {
   const lo=Math.min(myLine,posted), hi=Math.max(myLine,posted);
+  const a=Math.ceil(lo), b=Math.floor(hi);
   let pct=0;
-  for(let n=Math.ceil(lo);n<=Math.floor(hi);n++){
-    const v=PV[n]||2;
-    if(n===Math.ceil(lo)&&lo%1!==0) pct+=v*0.5;
-    else if(n===Math.floor(hi)&&hi%1!==0) pct+=v*0.5;
+  for(let n=a;n<=b;n++){
+    if(n===0) continue;                 // a margin of zero is not a real number
+    const v=PV[Math.abs(n)]||2;         // PV is keyed 1..18; PV[-7] was undefined so every rung fell through to 2
+    if(n===a&&lo%1!==0) pct+=v*0.5;
+    else if(n===b&&hi%1!==0) pct+=v*0.5;
     else pct+=v;
   }
-  if(myLine>0&&posted<0) pct-=3;
+  if(myLine*posted<0) pct-=3;           // crossing pick'em now costs the same in both directions
   for(const [min,stars] of [[15,3],[13,2.5],[11,2],[9,1.5],[7,1],[5.5,0.5]])
     if(pct>=min) return {stars,pct:pct.toFixed(1)};
   return {stars:0,pct:pct.toFixed(1)};
@@ -257,10 +259,10 @@ const isBet=b=>b.result?.recommendation&&!/NO BET/i.test(b.result.recommendation
 // Multi-season backtest (2015-2025, 2,544 walk-forward games, see backtest-multiseason.md):
 //   HFA 2.0 is RMSE-optimal (pooled implied 1.87, season-to-season SD ~1pt -> in-season learning is noise)
 //   TGPL 0.9/0.1 optimal; MOV caps and tuned constants add nothing out of sample
-//   star plays 50.4% ATS (n=910), 3* plays 48.7% (n=273): stars measure market disagreement, not edge
+//   star plays 51.1% ATS (n=1126), 3* plays 49.3% (n=373): stars measure market disagreement, not edge
 //   model-vs-market information coefficient 0.018 over 11 seasons; end-2025 ratings look-ahead: 0.77
 const CALIB_PRIOR_N=500;
-const HIST_STARS={0.5:{p:49.5,n:192},1:{p:47.9,n:236},1.5:{p:55.3,n:190},2:{p:50.0,n:156},2.5:{p:54.5,n:55},3:{p:48.7,n:273}};
+const HIST_STARS={0.5:{p:52.4,n:145},1:{p:52.4,n:229},1.5:{p:52.3,n:214},2:{p:50.4,n:246},2.5:{p:54.7,n:64},3:{p:49.3,n:373}};
 const CALIB_DEFAULT={hfaAdj:0,ouScalar:1,qbMult:1,nHfa:0,nOu:0,nQb:0,ic:null,nIc:0,on:true};
 const hfaOf=c=>HOME_ADV+((c&&c.on)?(c.hfaAdj||0):0);
 function wilson(w,n){
@@ -869,10 +871,12 @@ function AnalyzeTab({ratings,bankroll,unit,onLog,prefill,calib,qbMode,setQbMode}
   const spL=parseFloat(form.spread);
   const ouL=parseFloat(form.ou);
 
-  const sweAdj=Object.entries(sweOn).reduce((sum,[id,on])=>{
-    if(!on)return sum;
+  // "team" factors were hard-wired to the visitor and "variable" resolved to 0.
+  // sweOn now stores "h" or "a" so you pick which side each one benefits.
+  const sweAdj=Object.entries(sweOn).reduce((sum,[id,side])=>{
+    if(!side)return sum;
     const f=SWE.find(x=>x.id===id);if(!f)return sum;
-    const mul=f.ben==="home"?1:f.ben==="visitor"||f.ben==="team"?-1:0;
+    const mul=f.ben==="home"?1:f.ben==="visitor"?-1:(side==="h"?1:-1);
     return sum+(f.pts*mul/5);
   },0);
   const adjLine=!isNaN(myL)?parseFloat((myL+sweAdj).toFixed(2)):NaN;
@@ -1077,8 +1081,16 @@ function AnalyzeTab({ratings,bankroll,unit,onLog,prefill,calib,qbMode,setQbMode}
             <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
               {SWE.filter(f=>f.cat===cat).map(f=>{
                 const on=sweOn[f.id];
-                return <button key={f.id} onClick={()=>setSweOn(s=>({...s,[f.id]:!s[f.id]}))} style={{background:on?"#D4AF3322":"transparent",border:"1px solid "+(on?"#E04500":"#DDD8CF"),color:on?"#E04500":"#7A8E9A",fontSize:10,padding:"4px 9px",borderRadius:3,cursor:"pointer",fontFamily:"Space Mono,monospace"}}>
+                const fixed=f.ben==="home"||f.ben==="visitor";
+                const who=fixed?null:(on==="h"?(form.home||"HOME"):on==="a"?(form.away||"AWAY"):null);
+                const cycle=()=>setSweOn(s=>{
+                  const cur=s[f.id];
+                  if(fixed) return {...s,[f.id]:cur?null:"h"};
+                  return {...s,[f.id]:!cur?"h":cur==="h"?"a":null};
+                });
+                return <button key={f.id} onClick={cycle} title={fixed?"Benefits the "+f.ben:"Click for home, again for away, again to clear"} style={{background:on?"#D4AF3322":"transparent",border:"1px solid "+(on?"#E04500":"#DDD8CF"),color:on?"#E04500":"#7A8E9A",fontSize:10,padding:"4px 9px",borderRadius:3,cursor:"pointer",fontFamily:"Space Mono,monospace"}}>
                   {f.label} <span style={{color:on?"#7ABAE5":"#DDD8CF"}}>({f.pts>0?"+":""}{f.pts})</span>
+                  {who&&<span style={{color:"#1A6E3C",marginLeft:4}}>{who.slice(0,10)}</span>}
                 </button>;
               })}
             </div>

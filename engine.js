@@ -36,14 +36,16 @@ const PV = {1:3,2:3,3:8,4:3,5:3,6:5,7:6,8:3,9:2,10:4,11:2,12:2,13:2,14:5,15:2,16
 
 function calcStars(myLine, posted) {
   const lo=Math.min(myLine,posted), hi=Math.max(myLine,posted);
+  const a=Math.ceil(lo), b=Math.floor(hi);
   let pct=0;
-  for(let n=Math.ceil(lo);n<=Math.floor(hi);n++){
-    const v=PV[n]||2;
-    if(n===Math.ceil(lo)&&lo%1!==0) pct+=v*0.5;
-    else if(n===Math.floor(hi)&&hi%1!==0) pct+=v*0.5;
+  for(let n=a;n<=b;n++){
+    if(n===0) continue;                 // a margin of zero is not a real number
+    const v=PV[Math.abs(n)]||2;         // PV is keyed 1..18; PV[-7] was undefined so every rung fell through to 2
+    if(n===a&&lo%1!==0) pct+=v*0.5;
+    else if(n===b&&hi%1!==0) pct+=v*0.5;
     else pct+=v;
   }
-  if(myLine>0&&posted<0) pct-=3;
+  if(myLine*posted<0) pct-=3;           // crossing pick'em now costs the same in both directions
   for(const [min,stars] of [[15,3],[13,2.5],[11,2],[9,1.5],[7,1],[5.5,0.5]])
     if(pct>=min) return {stars,pct:pct.toFixed(1)};
   return {stars:0,pct:pct.toFixed(1)};
@@ -155,7 +157,7 @@ function normTeam(n){const m={"49ers":"San Francisco 49ers","Bears":"Chicago Bea
 
 const CALIB_PRIOR_N=500;
 
-const HIST_STARS={0.5:{p:49.5,n:192},1:{p:47.9,n:236},1.5:{p:55.3,n:190},2:{p:50.0,n:156},2.5:{p:54.5,n:55},3:{p:48.7,n:273}};
+const HIST_STARS={0.5:{p:52.4,n:145},1:{p:52.4,n:229},1.5:{p:52.3,n:214},2:{p:50.4,n:246},2.5:{p:54.7,n:64},3:{p:49.3,n:373}};
 
 const CALIB_DEFAULT={hfaAdj:0,ouScalar:1,qbMult:1,nHfa:0,nOu:0,nQb:0,ic:null,nIc:0,on:true};
 
