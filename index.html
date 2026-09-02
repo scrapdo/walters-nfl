@@ -62,7 +62,7 @@ h2.group{font-family:var(--sans);font-weight:500;font-size:14px;color:var(--mute
 .tick.mkt{background:var(--slate)}
 .tick.ours{background:var(--paper);border:2.5px solid var(--ink)}
 .lbl{position:absolute;top:26px;transform:translateX(-50%);font-size:12.5px;white-space:nowrap}
-.lbl.mkt{color:var(--slate)} .lbl.ours{color:var(--ink);font-weight:600}
+.lbl .mkt,.lbl.mkt{color:var(--slate)} .lbl .ours,.lbl.ours{color:var(--ink);font-weight:600}
 .gapv{position:absolute;top:-2px;transform:translateX(-50%);font-family:var(--serif);
   font-size:15px;font-weight:600;white-space:nowrap}
 .gapv{color:var(--ink)}
@@ -257,8 +257,11 @@ function axis(g){
       "<div class='gapv num' style='left:"+(lo+w/2)+"%'>"+Math.abs(g.edge).toFixed(1)+"</div>":"")+
     "<div class='tick mkt' style='left:"+pm+"%'></div>"+
     "<div class='tick ours' style='left:"+po+"%'></div>"+
-    "<div class='lbl mkt num' style='left:"+pm+"%'>"+num(g.market)+"</div>"+
-    "<div class='lbl ours num' style='left:"+po+"%'>"+num(g.line)+"</div>"+
+    (w<9
+      ? "<div class='lbl num' style='left:"+((pm+po)/2)+"%'><span class='mkt'>"+num(g.market)+
+        "</span> <span class='ours'>"+num(g.line)+"</span></div>"
+      : "<div class='lbl mkt num' style='left:"+pm+"%'>"+num(g.market)+"</div>"+
+        "<div class='lbl ours num' style='left:"+po+"%'>"+num(g.line)+"</div>")+
   "</div>";
 }
 function verdictChip(g){
