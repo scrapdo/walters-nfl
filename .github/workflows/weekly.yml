@@ -1,0 +1,74 @@
+name: walters-weekly
+on:
+  schedule:
+    - cron: '0 13 * * 2'
+    - cron: '0 22 * * 3,4,5,6'
+    - cron: '0 15 * * 0'
+    - cron: '0 13 * * 1'
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: 'tuesday | daily | close | grade'
+        default: 'tuesday'
+        required: true
+permissions:
+  contents: write
+concurrency: walters-weekly
+env:
+  NETLIFY_SITE_ID: 64a91411-4972-4152-b644-a71be3442a69
+  STAR_THRESHOLD: "1"
+  READ_MODEL: claude-fable-5-1
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: pip install pandas numpy && npm install --silent
+      - name: pick stage
+        id: st
+        run: |
+          S="${{ github.event.inputs.stage }}"
+          case "${{ github.event.schedule }}" in
+            "0 13 * * 2") S=tuesday ;;
+            "0 22 * * 3,4,5,6") S=daily ;;
+            "0 15 * * 0") S=close ;;
+            "0 13 * * 1") S=grade ;;
+          esac
+          echo "stage=${S:-tuesday}" >> $GITHUB_OUTPUT
+      - name: pipeline
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -e
+          STAGE="${{ steps.st.outputs.stage }}"
+          echo "stage: $STAGE"
+          [ -f data/ratings.json ] || node pipeline/run.js init-ratings
+          case "$STAGE" in
+            tuesday|daily)
+              python3 pipeline/fetch_data.py --stage $STAGE
+              node pipeline/run.js odds
+              node pipeline/run.js board
+              node pipeline/run.js analyze ;;
+            close)
+              node pipeline/run.js odds --close
+              node pipeline/run.js board ;;
+            grade)
+              python3 pipeline/fetch_data.py --stage grade
+              node pipeline/run.js grade ;;
+          esac
+      - name: commit data
+        run: |
+          git config user.name "walters-bot"
+          git config user.email "walters-bot@users.noreply.github.com"
+          git add data/
+          git diff --cached --quiet || git commit -m "data: ${{ steps.st.outputs.stage }} $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push
+      - name: deploy
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+        run: npx --yes netlify-cli@latest deploy --prod --dir . --site $NETLIFY_SITE_ID --message "auto ${{ steps.st.outputs.stage }}" 2>&1 | grep -E "Deploy complete|rror" || true

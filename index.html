@@ -1,0 +1,2098 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Walters System -- NFL Bet Analyzer</title>
+<meta name="description" content="Billy Walters NFL betting system: power ratings, player values, injury math, live lines, auto-graded results.">
+<style>body{margin:0;background:#F4F1EC;}#root{min-height:100vh;}#boot{font-family:monospace;color:#7A8E9A;padding:40px;text-align:center;}</style>
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<!-- Babel pinned to 7.x: Babel 8 defaults preset-react to the automatic runtime, which injects an ESM import and breaks classic scripts -->
+<script src="https://unpkg.com/@babel/standalone@7.27.0/babel.min.js"></script>
+<script>
+window.WALTERS_STANDALONE = true;
+// Inject Anthropic auth headers on every api.anthropic.com call (key from Settings tab)
+(function(){
+  const _fetch = window.fetch.bind(window);
+  window.fetch = function(url, opts){
+    if(typeof url === "string" && url.indexOf("api.anthropic.com") !== -1){
+      const k = localStorage.getItem("wnfl_akey") || "";
+      if(!k){ return Promise.reject(new Error("Add your Anthropic API key in the SETTINGS tab first")); }
+      opts = opts || {};
+      opts.headers = Object.assign({}, opts.headers || {}, {
+        "x-api-key": k,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true"
+      });
+    }
+    return _fetch(url, opts);
+  };
+})();
+</script>
+</head>
+<body>
+<div id="root"><div id="boot">LOADING WALTERS SYSTEM...</div></div>
+<script type="text/babel" data-presets="react">
+const { useState, useCallback, useEffect } = React;
+
+
+// inject Broncos fonts
+if(typeof document!=="undefined"&&!document.getElementById("bfonts")){
+  const lk=document.createElement("link");lk.id="bfonts";lk.rel="stylesheet";
+  lk.href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Source+Sans+3:ital,wght@0,300;0,400;0,600;1,400&family=Space+Mono:wght@400;700&display=swap";
+  document.head.appendChild(lk);
+}
+
+const DEFAULT_RATINGS = {
+  "Seattle Seahawks":+7.25,"Los Angeles Rams":+5.60,"Houston Texans":+4.86,
+  "New England Patriots":+4.07,"Jacksonville Jaguars":+4.03,"Denver Broncos":+3.15,
+  "Buffalo Bills":+2.84,"Baltimore Ravens":+2.23,"Detroit Lions":+2.12,
+  "San Francisco 49ers":+1.89,"Indianapolis Colts":+1.83,"Chicago Bears":+1.54,
+  "Philadelphia Eagles":+1.52,"Los Angeles Chargers":+1.15,"Minnesota Vikings":+0.74,
+  "Kansas City Chiefs":+0.58,"Green Bay Packers":+0.24,"Pittsburgh Steelers":+0.23,
+  "Tampa Bay Buccaneers":-0.84,"New York Giants":-1.30,"Cincinnati Bengals":-2.16,
+  "Atlanta Falcons":-2.19,"Carolina Panthers":-2.48,"Dallas Cowboys":-2.59,
+  "Cleveland Browns":-3.01,"Miami Dolphins":-3.01,"New Orleans Saints":-3.07,
+  "Washington Commanders":-3.70,"Arizona Cardinals":-3.72,"Tennessee Titans":-5.10,
+  "Las Vegas Raiders":-5.71,"New York Jets":-6.98,
+};
+// 2026 opening adjustments: end-2025 rating + net personnel change (Walters: ratings contain player values)
+// E5 rollover test: full-strength carryover of prior-season ratings is WORSE than starting flat (RMSE 13.34 vs 13.31);
+// optimal shrink 0.5-0.6 on walked ratings; app defaults (SD 3.40) need ~0.75 to reach market-like dispersion (SD ~2.6)
+const OPENING_SHRINK = 0.75;
+const OPENING_2026 = [
+  {t:"Atlanta Falcons",d:+0.8,why:"QB: Penix 6.8 -> Tua 7.6"},
+  {t:"Miami Dolphins",d:-1.3,why:"QB: Tua 7.6 -> Willis 6.3"},
+  {t:"Minnesota Vikings",d:+1.2,why:"QB: McCarthy 6.7 -> Murray 7.9"},
+  {t:"Arizona Cardinals",d:-1.3,why:"QB: Murray 7.9 -> Brissett 6.6"},
+  {t:"New York Jets",d:+1.3,why:"QB: Taylor/Fields ~6.2 -> Geno 7.5"},
+  {t:"Las Vegas Raiders",d:-0.3,why:"QB: Geno 7.5 -> Cousins 7.2"},
+  {t:"Cleveland Browns",d:+0.4,why:"QB: rookie carousel ~6.1 -> Watson 6.5"},
+  {t:"Kansas City Chiefs",d:+1.5,why:"Mahomes back from ACL (late-25 rating dragged by backup games)"},
+  {t:"Denver Broncos",d:+0.5,why:"Nix back from playoff injury"},
+];
+const HOME_ADV = 2.0;
+const PV = {1:3,2:3,3:8,4:3,5:3,6:5,7:6,8:3,9:2,10:4,11:2,12:2,13:2,14:5,15:2,16:3,17:3,18:3};
+
+function calcStars(myLine, posted) {
+  const lo=Math.min(myLine,posted), hi=Math.max(myLine,posted);
+  let pct=0;
+  for(let n=Math.ceil(lo);n<=Math.floor(hi);n++){
+    const v=PV[n]||2;
+    if(n===Math.ceil(lo)&&lo%1!==0) pct+=v*0.5;
+    else if(n===Math.floor(hi)&&hi%1!==0) pct+=v*0.5;
+    else pct+=v;
+  }
+  if(myLine>0&&posted<0) pct-=3;
+  for(const [min,stars] of [[15,3],[13,2.5],[11,2],[9,1.5],[7,1],[5.5,0.5]])
+    if(pct>=min) return {stars,pct:pct.toFixed(1)};
+  return {stars:0,pct:pct.toFixed(1)};
+}
+
+const SWE = [
+  {id:"same_turf",label:"Same turf (H&A)",pts:+1,ben:"visitor",cat:"S"},
+  {id:"opp_turf",label:"Different turf",pts:+1,ben:"home",cat:"S"},
+  {id:"same_div",label:"Divisional game",pts:+1,ben:"visitor",cat:"S"},
+  {id:"diff_conf",label:"Inter-conference",pts:+1,ben:"home",cat:"S"},
+  {id:"home_sun",label:"Home Sunday Night",pts:+4,ben:"home",cat:"S"},
+  {id:"home_mon",label:"Home Monday Night",pts:+2,ben:"home",cat:"S"},
+  {id:"away_mon_h",label:"Away off Mon (at home)",pts:+6,ben:"home",cat:"S"},
+  {id:"away_mon_a",label:"Away off Mon (away)",pts:+8,ben:"home",cat:"S"},
+  {id:"3rd_road",label:"3rd road game in 4",pts:+2,ben:"home",cat:"S"},
+  {id:"off_ot_h",label:"Home off OT game",pts:+4,ben:"visitor",cat:"S"},
+  {id:"off_ot_a",label:"Away off OT game",pts:+2,ben:"visitor",cat:"S"},
+  {id:"bye_avg",label:"Avg team off bye",pts:+5,ben:"team",cat:"S"},
+  {id:"bye_great",label:"Great team off bye",pts:+7,ben:"team",cat:"S"},
+  {id:"sb_loser",label:"SB loser first game",pts:+4,ben:"visitor",cat:"S"},
+  {id:"bounce_19",label:"Lost prev by 19+",pts:+2,ben:"team",cat:"S"},
+  {id:"bounce_29",label:"Lost prev by 29+",pts:+4,ben:"team",cat:"S"},
+  {id:"cold_25",label:"Warm team visiting 25F",pts:+0.75,ben:"home",cat:"W"},
+  {id:"cold_20",label:"Warm team visiting 20F",pts:+1.0,ben:"home",cat:"W"},
+  {id:"cold_10",label:"Warm team visiting 10F or below",pts:+1.75,ben:"home",cat:"W"},
+  {id:"rain",label:"Rain",pts:+0.25,ben:"visitor",cat:"W"},
+  {id:"hardrain",label:"Hard rain",pts:+0.75,ben:"visitor",cat:"W"},
+  {id:"tz_west",label:"10am game, West team",pts:+2,ben:"visitor",cat:"W"},
+  {id:"tz_night",label:"Night game, East to West",pts:+6,ben:"visitor",cat:"W"},
+  {id:"revenge",label:"Revenge game",pts:+1,ben:"team",cat:"E"},
+  {id:"new_coach",label:"New head coach",pts:+2,ben:"variable",cat:"E"},
+  {id:"playoff",label:"One team in playoff chase",pts:+2,ben:"team",cat:"E"},
+];
+
+// -- WALTERS PLAYER VALUES (Gambler ch.22) --
+// QB scale: 6.0-9.5 for ranked starters (book: 67 QBs, avg 7.74, Mahomes-era max 9.5).
+// Ranked backups 6.0-7.2; unranked depth QBs below 6.0.
+// wx: per-QB weather W-factors, each unit = 0.15 pts (book: Allen +1 hot/dome, -1 cold; Rodgers opposite).
+// Seed verified vs official depth charts Aug 29, 2026.
+const QB_SEED = {
+  "Arizona Cardinals":{qb1:{n:"Jacoby Brissett",v:6.6,wx:{}},qb2:{n:"Gardner Minshew II",v:6.2}},
+  "Atlanta Falcons":{qb1:{n:"Tua Tagovailoa",v:7.6,wx:{cold:-2,dome:1}},qb2:{n:"Michael Penix Jr.",v:6.8}},
+  "Baltimore Ravens":{qb1:{n:"Lamar Jackson",v:9.3,wx:{}},qb2:{n:"Tyler Huntley",v:5.9}},
+  "Buffalo Bills":{qb1:{n:"Josh Allen",v:9.5,wx:{hot:1,dome:1,cold:-1}},qb2:{n:"Kyle Allen",v:5.7}},
+  "Carolina Panthers":{qb1:{n:"Bryce Young",v:7.0,wx:{}},qb2:{n:"Kenny Pickett",v:6.1}},
+  "Chicago Bears":{qb1:{n:"Caleb Williams",v:8.0,wx:{}},qb2:{n:"Tyson Bagent",v:5.8}},
+  "Cincinnati Bengals":{qb1:{n:"Joe Burrow",v:9.1,wx:{}},qb2:{n:"Joe Flacco",v:6.2}},
+  "Cleveland Browns":{qb1:{n:"Deshaun Watson",v:6.5,wx:{}},qb2:{n:"Shedeur Sanders",v:6.1}},
+  "Dallas Cowboys":{qb1:{n:"Dak Prescott",v:8.1,wx:{}},qb2:{n:"Joe Milton III",v:5.7}},
+  "Denver Broncos":{qb1:{n:"Bo Nix",v:8.4,wx:{}},qb2:{n:"Jarrett Stidham",v:5.9}},
+  "Detroit Lions":{qb1:{n:"Jared Goff",v:8.2,wx:{dome:1,cold:-1}},qb2:{n:"Joshua Dobbs",v:5.9}},
+  "Green Bay Packers":{qb1:{n:"Jordan Love",v:8.0,wx:{cold:1}},qb2:{n:"Tyrod Taylor",v:6.1}},
+  "Houston Texans":{qb1:{n:"C.J. Stroud",v:8.5,wx:{}},qb2:{n:"Davis Mills",v:5.9}},
+  "Indianapolis Colts":{qb1:{n:"Daniel Jones",v:6.8,wx:{}},qb2:{n:"Anthony Richardson Sr.",v:6.2}},
+  "Jacksonville Jaguars":{qb1:{n:"Trevor Lawrence",v:7.6,wx:{}},qb2:{n:"Nick Mullens",v:5.8}},
+  "Kansas City Chiefs":{qb1:{n:"Patrick Mahomes",v:9.1,wx:{},note:"off ACL surgery"},qb2:{n:"Justin Fields",v:7.0}},
+  "Las Vegas Raiders":{qb1:{n:"Kirk Cousins",v:7.2,wx:{dome:1,cold:-1}},qb2:{n:"Fernando Mendoza",v:5.6}},
+  "Los Angeles Chargers":{qb1:{n:"Justin Herbert",v:8.6,wx:{}},qb2:{n:"Trey Lance",v:5.7}},
+  "Los Angeles Rams":{qb1:{n:"Matthew Stafford",v:8.1,wx:{dome:1}},qb2:{n:"Stetson Bennett IV",v:5.5}},
+  "Miami Dolphins":{qb1:{n:"Malik Willis",v:6.3,wx:{hot:1,cold:-1}},qb2:{n:"Quinn Ewers",v:5.7}},
+  "Minnesota Vikings":{qb1:{n:"Kyler Murray",v:7.9,wx:{dome:1,cold:-1}},qb2:{n:"J.J. McCarthy",v:6.7}},
+  "New England Patriots":{qb1:{n:"Drake Maye",v:8.6,wx:{cold:1}},qb2:{n:"Tommy DeVito",v:5.6}},
+  "New Orleans Saints":{qb1:{n:"Tyler Shough",v:6.7,wx:{dome:1}},qb2:{n:"Spencer Rattler",v:5.8}},
+  "New York Giants":{qb1:{n:"Jaxson Dart",v:7.4,wx:{}},qb2:{n:"Jameis Winston",v:6.2}},
+  "New York Jets":{qb1:{n:"Geno Smith",v:7.5,wx:{}},qb2:{n:"Cade Klubnik",v:5.6}},
+  "Philadelphia Eagles":{qb1:{n:"Jalen Hurts",v:8.7,wx:{}},qb2:{n:"Andy Dalton",v:5.8}},
+  "Pittsburgh Steelers":{qb1:{n:"Aaron Rodgers",v:7.3,wx:{cold:1,hot:-1}},qb2:{n:"Mason Rudolph",v:6.0}},
+  "San Francisco 49ers":{qb1:{n:"Brock Purdy",v:8.1,wx:{}},qb2:{n:"Mac Jones",v:6.0}},
+  "Seattle Seahawks":{qb1:{n:"Sam Darnold",v:7.4,wx:{}},qb2:{n:"Drew Lock",v:6.0}},
+  "Tampa Bay Buccaneers":{qb1:{n:"Baker Mayfield",v:7.8,wx:{hot:1}},qb2:{n:"Jake Browning",v:6.1}},
+  "Tennessee Titans":{qb1:{n:"Cam Ward",v:7.1,wx:{}},qb2:{n:"Mitchell Trubisky",v:6.0}},
+  "Washington Commanders":{qb1:{n:"Jayden Daniels",v:9.0,wx:{}},qb2:{n:"Marcus Mariota",v:6.0}},
+};
+
+// Position -> stack group (book: receivers, DL, OL, DB, LB, RB compound)
+const POS_GROUP={QB:"QB",RB:"RB",FB:"RB",WR:"REC",TE:"REC",OT:"OL",G:"OL",C:"OL",OL:"OL",EDGE:"DL",DE:"DL",DT:"DL",NT:"DL",DL:"DL",LB:"LB",ILB:"LB",OLB:"LB",MLB:"LB",CB:"DB",S:"DB",FS:"DB",SS:"DB",DB:"DB",K:"ST",P:"ST",LS:"ST"};
+// Stack multipliers when 2+ players degraded in same group (book: top-2 WRs = sum x1.5, DL x1.4)
+const STACK_MULT={REC:1.5,DL:1.4,OL:1.4,DB:1.35,LB:1.35,RB:1.3,QB:1,ST:1};
+// Injury status -> expected value loss, calibrated on 36,723 regular-player report lines (2015-25, nflverse injuries x snap counts),
+// measured against the healthy baseline (regulars average 87.8% of usual snaps even when fully healthy):
+//   Out 99.5% | Doubtful 98-99% (= OUT, not 75%) | Questionable: DNP 54%, Limited 30% (QB 52%, DB 36%), Full 15% | no designation + DNP 12%
+const Q_PCT={Q15:0.15,Q30:0.30,Q55:0.55};
+const INJ_CALIB={"Out":"99.5% (n=5517)","Doubtful":"98-99% -> OUT (n=1104)","Q + DNP":"54% (n=1565)","Q + Limited":"30%; QB 52%, DB 36% (n=6200)","Q + Full":"15% (n=1731)","No tag + DNP":"12% (n=1921)"};
+
+// -- O/U MODEL (matchup-average totals) --
+// ExpPts(team) = avg(team offense PPG, opp defense PAPG); total = sum + weather; injuries couple at 0.5x
+const OU_WX={dome:1,hot:0,cold:-1.5,wind:-2.5};
+const OFF_GROUPS={QB:1,RB:1,REC:1,OL:1};
+function splitInjury(delta){
+  let off=0,def=0;
+  delta.details.forEach(d=>{
+    const g=POS_GROUP[d.p]||"ST";
+    if(g==="ST")return;
+    if(OFF_GROUPS[g])off+=d.loss;else def+=d.loss;
+  });
+  return{off:parseFloat(off.toFixed(2)),def:parseFloat(def.toFixed(2))};
+}
+function calcModelTotal(hStats,aStats,hDelta,aDelta,gameWx){
+  if(!hStats||!aStats)return null;
+  const hi=splitInjury(hDelta),ai=splitInjury(aDelta);
+  const hPts=(hStats.off+aStats.def)/2 - 0.5*hi.off + 0.5*ai.def;
+  const aPts=(aStats.off+hStats.def)/2 - 0.5*ai.off + 0.5*hi.def;
+  let wx=0;Object.keys(OU_WX).forEach(k=>{if(gameWx[k])wx+=OU_WX[k];});
+  return{total:parseFloat((hPts+aPts+wx).toFixed(1)),hPts:parseFloat(hPts.toFixed(1)),aPts:parseFloat(aPts.toFixed(1)),wx};
+}
+function loadStatsCache(team){
+  try{const r=localStorage.getItem("wstats_"+(ABBR[team]||team));if(!r)return null;const c=JSON.parse(r);if(Date.now()-c.ts>24*3600*1000)return null;return c.s;}catch{return null;}
+}
+function saveStatsCache(team,s){try{localStorage.setItem("wstats_"+(ABBR[team]||team),JSON.stringify({ts:Date.now(),s}));}catch{}}
+async function fetchTeamStatsAPI(away,home){
+  const pr="Search the web for NFL team scoring stats for the "+away+" and the "+home+". If the 2026 regular season has 3+ games played use current 2026 per-game averages, otherwise use full 2025 regular season averages. Return ONLY raw JSON, no markdown: {\"away\":{\"off\":24.5,\"def\":21.3},\"home\":{\"off\":22.1,\"def\":19.8}} where off = points scored per game and def = points allowed per game.";
+  const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1200,tools:[{type:"web_search_20250305",name:"web_search"}],messages:[{role:"user",content:pr}]})});
+  const data=await res.json();
+  if(data.error)throw new Error(data.error.message||"API error");
+  const txt=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n");
+  const m=txt.match(/\{[\s\S]*\}/);
+  if(!m)throw new Error("No stats found");
+  const j=JSON.parse(m[0]);
+  return{away:{off:parseFloat(j.away.off),def:parseFloat(j.away.def)},home:{off:parseFloat(j.home.off),def:parseFloat(j.home.def)}};
+}
+
+// Compute a team's injury point delta from roster + statuses (Walters ch.22 method)
+// qbMult scales QB-position losses (book-literal 1.0; market behaves closer to 2.0 -- Results calibrates it)
+function calcInjuryDelta(roster,statuses,qbMult){
+  const qm=qbMult||1;
+  const groups={},details=[];let qbRaw=0;
+  roster.forEach(pl=>{
+    const st=statuses[pl.n]||"IN";
+    if(st==="IN")return;
+    let loss,repl=null;const val=x=>(x.ev!=null?x.ev:x.v);
+    if(st==="OUT"){
+      const r=roster.filter(x=>x.p===pl.p&&x.n!==pl.n&&(statuses[x.n]||"IN")!=="OUT"&&x.d>pl.d).sort((a,b)=>a.d-b.d)[0];
+      const rv=r?val(r)*(1-(Q_PCT[statuses[r.n]]||0)):0;
+      loss=Math.max(0,val(pl)-rv);repl=r?r.n:null;
+    }else{
+      const r=roster.filter(x=>x.p===pl.p&&x.n!==pl.n&&(statuses[x.n]||"IN")!=="OUT"&&x.d>pl.d).sort((a,b)=>a.d-b.d)[0];
+      const rv=r?val(r)*(1-(Q_PCT[statuses[r.n]]||0)):0;
+      loss=(Q_PCT[st]||0)*Math.max(0,val(pl)-rv);repl=r?r.n:null;
+    }
+    if(pl.p==="QB"){qbRaw+=loss;loss=loss*qm;}
+    details.push({n:pl.n,p:pl.p,st,loss:parseFloat(loss.toFixed(2)),repl});
+    const g=POS_GROUP[pl.p]||"OTHER";
+    (groups[g]=groups[g]||[]).push(loss);
+  });
+  let total=0;const stacked=[];
+  Object.entries(groups).forEach(([g,losses])=>{
+    const sum=losses.reduce((a,b)=>a+b,0);
+    const mult=losses.length>=2?(STACK_MULT[g]||1.3):1;
+    if(mult>1&&sum>0)stacked.push(g);
+    total+=sum*mult;
+  });
+  const qb=parseFloat(qbRaw.toFixed(2));
+  return {total:parseFloat(total.toFixed(2)),details,stacked,qb,other:parseFloat((total-qb*qm).toFixed(2))};
+}
+
+// QB-only fallback roster from seed when full roster not fetched
+function seedRoster(team){
+  const s=QB_SEED[team];if(!s)return[];
+  return [{n:s.qb1.n,p:"QB",v:s.qb1.v,d:1},{n:s.qb2.n,p:"QB",v:s.qb2.v,d:2}];
+}
+
+const ABBR = {"Arizona Cardinals":"ARI","Atlanta Falcons":"ATL","Baltimore Ravens":"BAL","Buffalo Bills":"BUF","Carolina Panthers":"CAR","Chicago Bears":"CHI","Cincinnati Bengals":"CIN","Cleveland Browns":"CLE","Dallas Cowboys":"DAL","Denver Broncos":"DEN","Detroit Lions":"DET","Green Bay Packers":"GB","Houston Texans":"HOU","Indianapolis Colts":"IND","Jacksonville Jaguars":"JAX","Kansas City Chiefs":"KC","Las Vegas Raiders":"LV","Los Angeles Chargers":"LAC","Los Angeles Rams":"LAR","Miami Dolphins":"MIA","Minnesota Vikings":"MIN","New England Patriots":"NE","New Orleans Saints":"NO","New York Giants":"NYG","New York Jets":"NYJ","Philadelphia Eagles":"PHI","Pittsburgh Steelers":"PIT","San Francisco 49ers":"SF","Seattle Seahawks":"SEA","Tampa Bay Buccaneers":"TB","Tennessee Titans":"TEN","Washington Commanders":"WAS"};
+const CLR = {"Arizona Cardinals":"#97233F","Atlanta Falcons":"#A71930","Baltimore Ravens":"#241773","Buffalo Bills":"#00338D","Carolina Panthers":"#0085CA","Chicago Bears":"#0B162A","Cincinnati Bengals":"#E04500","Cleveland Browns":"#FF3C00","Dallas Cowboys":"#003594","Denver Broncos":"#E05300","Detroit Lions":"#0076B6","Green Bay Packers":"#203731","Houston Texans":"#03202F","Indianapolis Colts":"#002C5F","Jacksonville Jaguars":"#006778","Kansas City Chiefs":"#E31837","Las Vegas Raiders":"#C8C0B0","Los Angeles Chargers":"#0080C6","Los Angeles Rams":"#003594","Miami Dolphins":"#008E97","Minnesota Vikings":"#4F2683","New England Patriots":"#002244","New Orleans Saints":"#9B8650","New York Giants":"#0B2265","New York Jets":"#125740","Philadelphia Eagles":"#004C54","Pittsburgh Steelers":"#A88000","San Francisco 49ers":"#AA0000","Seattle Seahawks":"#002244","Tampa Bay Buccaneers":"#D50A0A","Tennessee Titans":"#0C2340","Washington Commanders":"#5A1414"};
+
+function normTeam(n){const m={"49ers":"San Francisco 49ers","Bears":"Chicago Bears","Bengals":"Cincinnati Bengals","Bills":"Buffalo Bills","Broncos":"Denver Broncos","Browns":"Cleveland Browns","Buccaneers":"Tampa Bay Buccaneers","Cardinals":"Arizona Cardinals","Chargers":"Los Angeles Chargers","Chiefs":"Kansas City Chiefs","Colts":"Indianapolis Colts","Cowboys":"Dallas Cowboys","Dolphins":"Miami Dolphins","Eagles":"Philadelphia Eagles","Falcons":"Atlanta Falcons","Giants":"New York Giants","Jaguars":"Jacksonville Jaguars","Jets":"New York Jets","Lions":"Detroit Lions","Packers":"Green Bay Packers","Panthers":"Carolina Panthers","Patriots":"New England Patriots","Raiders":"Las Vegas Raiders","Rams":"Los Angeles Rams","Ravens":"Baltimore Ravens","Saints":"New Orleans Saints","Seahawks":"Seattle Seahawks","Steelers":"Pittsburgh Steelers","Texans":"Houston Texans","Titans":"Tennessee Titans","Vikings":"Minnesota Vikings","Commanders":"Washington Commanders"};for(const[k,v]of Object.entries(m))if(n.includes(k))return v;return n;}
+
+const isBet=b=>b.result?.recommendation&&!/NO BET/i.test(b.result.recommendation);
+
+// -- CALIBRATION (learned from graded weeks; shrunk toward defaults until sample earns it) --
+// Multi-season backtest (2015-2025, 2,544 walk-forward games, see backtest-multiseason.md):
+//   HFA 2.0 is RMSE-optimal (pooled implied 1.87, season-to-season SD ~1pt -> in-season learning is noise)
+//   TGPL 0.9/0.1 optimal; MOV caps and tuned constants add nothing out of sample
+//   star plays 50.4% ATS (n=910), 3* plays 48.7% (n=273): stars measure market disagreement, not edge
+//   model-vs-market information coefficient 0.018 over 11 seasons; end-2025 ratings look-ahead: 0.77
+const CALIB_PRIOR_N=500;
+const HIST_STARS={0.5:{p:49.5,n:192},1:{p:47.9,n:236},1.5:{p:55.3,n:190},2:{p:50.0,n:156},2.5:{p:54.5,n:55},3:{p:48.7,n:273}};
+const CALIB_DEFAULT={hfaAdj:0,ouScalar:1,qbMult:1,nHfa:0,nOu:0,nQb:0,ic:null,nIc:0,on:true};
+const hfaOf=c=>HOME_ADV+((c&&c.on)?(c.hfaAdj||0):0);
+function wilson(w,n){
+  if(!n)return null;
+  const z=1.96,p=w/n,d=1+z*z/n,c=p+z*z/(2*n),s=z*Math.sqrt((p*(1-p)+z*z/(4*n))/n);
+  return[Math.max(0,(c-s)/d*100),Math.min(100,(c+s)/d*100)];
+}
+function nameReport(raw,keyFn){
+  const dropped=[];const matched=[];
+  raw.forEach(x=>{const k=keyFn(x);if(k.every(t=>t in DEFAULT_RATINGS))matched.push(x);else dropped.push(k.filter(t=>!(t in DEFAULT_RATINGS)).join("/"));});
+  return{matched,dropped};
+}
+function computeCalibration(slates,history,prev){
+  const c={...CALIB_DEFAULT,on:prev?prev.on:true};
+  // HFA: all graded slate games, margin vs model line
+  const errs=[];
+  (slates||[]).forEach(s=>(s.games||[]).forEach(g=>{if(g.hs!=null&&g.modelLine!=null&&!g.neutral)errs.push((g.hs-g.as)-g.modelLine);}));
+  if(errs.length){const b=errs.reduce((a,x)=>a+x,0)/errs.length;c.nHfa=errs.length;c.hfaAdj=parseFloat((b*errs.length/(errs.length+CALIB_PRIOR_N)).toFixed(2));}
+  // information coefficient: slope of (margin-close) on (model-close) over slate games with closing lines
+  const xs=[],ys=[];
+  (slates||[]).forEach(s=>(s.games||[]).forEach(g=>{if(g.hs!=null&&g.close!=null&&g.modelLine!=null){xs.push(g.modelLine-g.close);ys.push((g.hs-g.as)-g.close);}}));
+  if(xs.length>=8){const mx=xs.reduce((a,x)=>a+x,0)/xs.length,my=ys.reduce((a,x)=>a+x,0)/ys.length;let sxy=0,sxx=0;xs.forEach((x,i)=>{sxy+=(x-mx)*(ys[i]-my);sxx+=(x-mx)*(x-mx);});c.ic=sxx?parseFloat((sxy/sxx).toFixed(3)):null;c.nIc=xs.length;}
+  // O/U scalar: graded analyzed games with a model total
+  let at=0,mt=0,n=0;
+  (history||[]).forEach(b=>{if(b.hs!=null&&b.modelOU){at+=b.hs+b.as;mt+=b.modelOU;n++;}});
+  if(n&&mt>0){const r=at/mt;c.nOu=n;c.ouScalar=parseFloat((1+(r-1)*n/(n+CALIB_PRIOR_N)).toFixed(3));}
+  // QB multiplier: graded analyzed games with QB injury value; pick m minimizing squared error
+  const qg=(history||[]).filter(b=>b.hs!=null&&b.game&&b.game.baseLine!=null&&((b.game.hQb||0)+(b.game.aQb||0))>0);
+  c.nQb=qg.length;
+  if(qg.length>=5){
+    let best=1,bestE=Infinity;
+    [1,1.5,2,2.5,3].forEach(m=>{
+      const e=qg.reduce((a,b)=>{const g=b.game;const line=g.baseLine-((g.hQb||0)*m+(g.hOther||0))+((g.aQb||0)*m+(g.aOther||0));return a+Math.pow((b.hs-b.as)-line,2);},0);
+      if(e<bestE){bestE=e;best=m;}
+    });
+    c.qbMult=best;
+  }
+  return c;
+}
+async function claudeSearchJSON(prompt,maxTokens,arrayMode){
+  const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:maxTokens,tools:[{type:"web_search_20250305",name:"web_search"}],messages:[{role:"user",content:prompt}]})});
+  const data=await res.json();
+  if(data.error)throw new Error(data.error.message||"API error");
+  const txt=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n");
+  const m=txt.match(arrayMode?/\[[\s\S]*\]/:/\{[\s\S]*\}/);
+  if(!m)throw new Error("No JSON in response");
+  return JSON.parse(m[0]);
+}
+async function fetchScheduleAPI(wk){
+  const raw=await claudeSearchJSON("Search the web for the official 2026 NFL regular season schedule for Week "+wk+". Return ONLY a raw JSON array, no markdown, one entry per game: [{\"away\":\"Full Team Name\",\"home\":\"Full Team Name\",\"day\":\"Sun Sep 13\",\"time\":\"1:00 PM ET\",\"net\":\"CBS\"}]. Use full official team names. Include every game that week (usually 13-16 games).",2500,true);
+  const norm=raw.map(x=>({away:normTeam(x.away||""),home:normTeam(x.home||""),day:x.day||"",time:x.time||"",net:x.net||""}));
+  const rep=nameReport(norm,x=>[x.home,x.away]);
+  return{games:rep.matched,dropped:rep.dropped};
+}
+async function fetchFinalsAPI(pairs){
+  const list=pairs.map(p=>p.away+" at "+p.home).join("; ");
+  const raw=await claudeSearchJSON("Search the web for FINAL scores of these 2026 NFL games: "+list+". Return ONLY raw JSON, no markdown: [{\"away\":\"Full Team Name\",\"home\":\"Full Team Name\",\"awayScore\":24,\"homeScore\":21,\"final\":true}]. Only include games that have FINISHED (final:true). Omit games not yet played or in progress.",2500,true);
+  const norm=raw.filter(s=>s.final&&s.homeScore!=null&&s.awayScore!=null).map(s=>({home:normTeam(s.home||""),away:normTeam(s.away||""),hs:parseInt(s.homeScore),as:parseInt(s.awayScore)}));
+  const rep=nameReport(norm,x=>[x.home,x.away]);
+  return{finals:rep.matched,dropped:rep.dropped};
+}
+
+// -- UI atoms --
+function Stars({s,lg}){const sz=lg?20:13;return <span style={{display:"inline-flex",gap:1}}>{[1,2,3].map(i=>{const f=i<=Math.floor(s),h=i===Math.floor(s)+1&&s%1>=0.5;return <svg key={i}width={sz}height={sz}viewBox="0 0 20 20"><polygon points="10,1 12.9,7 19.5,7.6 14.5,12 16.2,18.5 10,15 3.8,18.5 5.5,12 0.5,7.6 7.1,7"fill={f?"#E04500":h?"url(#h"+i+s+")":"#DDD8CF"}stroke="#E04500"strokeWidth="0.5"/>{h&&<defs><linearGradient id={"h"+i+s}><stop offset="50%"stopColor="#E04500"/><stop offset="50%"stopColor="#DDD8CF"/></linearGradient></defs>}</svg>})}</span>;}
+function Tag({t,c="#3A6A85"}){return <span style={{background:c+"22",color:c,fontSize:9,letterSpacing:2,padding:"2px 7px",borderRadius:2,fontFamily:"Space Mono,monospace",fontWeight:700}}>{t}</span>;}
+function H2({children}){return <div style={{color:"#7A8E9A",fontSize:10,letterSpacing:4,fontFamily:"Space Mono,monospace",margin:"20px 20px 0",paddingBottom:8,borderBottom:"1px solid #1a1a1a"}}>{children}</div>;}
+const St={
+  inp:{background:"#F8F6F2",border:"1px solid #222",borderRadius:3,padding:"9px 12px",color:"#0A1F35",fontSize:13,fontFamily:"Source Sans 3,Georgia,serif",outline:"none",width:"100%",boxSizing:"border-box"},
+  sel:{background:"#F8F6F2",border:"1px solid #222",borderRadius:3,padding:"9px 12px",color:"#0A1F35",fontSize:13,fontFamily:"Source Sans 3,Georgia,serif",outline:"none",width:"100%",cursor:"pointer"},
+  lbl:{color:"#5A7A90",fontSize:10,letterSpacing:2,fontFamily:"Space Mono,monospace",marginBottom:4,display:"block",textTransform:"uppercase"},
+  btn:{width:"100%",background:"linear-gradient(135deg,#E04800,#C43500)",border:"none",borderRadius:3,padding:"13px",color:"#000",fontSize:12,fontWeight:900,letterSpacing:3,cursor:"pointer",fontFamily:"Space Mono,monospace",display:"flex",alignItems:"center",justifyContent:"center",gap:8},
+  sm:{background:"transparent",border:"1px solid #333",color:"#6A8A9A",fontSize:10,letterSpacing:2,padding:"6px 12px",borderRadius:3,cursor:"pointer",fontFamily:"Space Mono,monospace",fontWeight:700},
+  err:{background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:3,padding:"10px 14px",color:"#C0392B",fontSize:12},
+};
+
+// -- Footer branding --
+function EthFooter() {
+  return (
+    <div style={{margin:"32px 20px 0",paddingTop:20,borderTop:"1px solid #1a1a1a",display:"flex",flexDirection:"column",alignItems:"center",gap:6,paddingBottom:16}}>
+      <div style={{fontSize:9,fontFamily:"Space Mono,monospace",color:"#C8C0B0",letterSpacing:2}}>DEVELOPED BY</div>
+      <div style={{display:"flex",alignItems:"center",gap:9}}>
+        <svg width="20" height="20" viewBox="0 0 100 100" fill="none" style={{opacity:0.35}}>
+          <circle cx="50" cy="50" r="48" stroke="#E04500" strokeWidth="2" fill="none"/>
+          <path d="M38 44 C36 38 37 30 42 26 C45 23 52 21 58 24 C64 27 66 34 65 40 C64 46 60 50 54 52 C48 54 41 50 38 44Z" fill="#E04500" opacity="0.7"/>
+          <path d="M43 35 Q45 33 47 35" stroke="#F8F6F2" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+          <path d="M53 35 Q55 33 57 35" stroke="#F8F6F2" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+          <path d="M45 41 Q50 43 55 41" stroke="#F8F6F2" strokeWidth="1.2" fill="none" strokeLinecap="round"/>
+          <path d="M38 44 Q36 52 38 58 Q42 66 50 68 Q58 66 62 58 Q64 52 62 44" fill="#E04500" opacity="0.3"/>
+          <path d="M34 34 C30 30 29 22 34 18 C31 22 31 29 35 32" fill="#E04500" opacity="0.4"/>
+          <path d="M54 12 C60 11 65 15 66 21 C63 16 58 13 54 14" fill="#E04500" opacity="0.4"/>
+        </svg>
+        <div style={{display:"flex",alignItems:"center",gap:0}}>
+          <span style={{fontSize:15,fontFamily:"Source Sans 3,sans-serif",fontWeight:400,color:"#E04500",opacity:0.55,letterSpacing:0.3}}>@eyeThrow</span>
+          <svg width="12" height="15" viewBox="0 0 13 18" fill="none" style={{marginTop:-1,opacity:0.45}}>
+            <path d="M6.5 0 C6.5 0 11 5 11 9.5 C11 9.5 8.5 7.5 6.5 8.5 C4.5 7.5 2 9.5 2 9.5 C2 5 6.5 0 6.5 0Z" fill="#C0392B"/>
+            <path d="M6.5 6 C6.5 6 9.5 9.5 9.5 12.5 C9.5 15 8.2 16.8 6.5 17.8 C4.8 16.8 3.5 15 3.5 12.5 C3.5 9.5 6.5 6 6.5 6Z" fill="#E05300"/>
+            <path d="M6.5 10.5 C6.5 10.5 7.5 12 7.5 13.5 C7.5 14.6 7.1 15.5 6.5 16 C5.9 15.5 5.5 14.6 5.5 13.5 C5.5 12 6.5 10.5 6.5 10.5Z" fill="#FFCB05"/>
+          </svg>
+          <span style={{fontSize:15,fontFamily:"Source Sans 3,sans-serif",fontWeight:400,color:"#E04500",opacity:0.55,letterSpacing:0.3}}>Heat</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// -- PLAYER DATA LAYER (import from player_pipeline.py: nflverse/PFR or PFF export) --
+// Tests 2018-25: pass rush vs protection is ADDITIVE (no matchup term; both sides already in ratings);
+// individual and unit DL ratings predict equally (use unit + individual availability); OL continuity effect
+// is small; QB individual value ~1.1-1.9 pts of spread per SD; bottom-up ratings alone are WORSE than
+// top-down (RMSE 13.2 vs 12.7); as a layer on top-down they add ~0.03 RMSE. Value of this layer is
+// availability, PFF import, and QB tracking -- not a better base rating.
+const PERF_ALPHA=0.25;   // effective value = base x (1 + alpha x idx), clamped
+const QB_BOOK_AVG=7.74,QB_PTS_PER_SD=0.85;   // book QB scale: avg 7.74; ~0.85 book-points per SD of QB EPA/dropback
+function loadPlayerData(){try{return JSON.parse(localStorage.getItem("wplayers"))||null;}catch{return null;}}
+function savePlayerData(d){try{localStorage.setItem("wplayers",JSON.stringify(d));}catch{}}
+function nameKey(n){const s=(n||"").toLowerCase().replace(/[^a-z .]/g,"").replace(/\b(jr|sr|ii|iii|iv)\b/g,"").trim();const parts=s.split(/[ .]+/).filter(Boolean);if(!parts.length)return"";return parts[0][0]+"|"+parts[parts.length-1];}
+function findPerf(list,name){
+  if(!list||!list.length)return null;
+  const lc=(name||"").toLowerCase();
+  let hit=list.find(p=>(p.n||"").toLowerCase()===lc);
+  if(!hit){const k=nameKey(name);hit=list.find(p=>nameKey(p.n)===k);}
+  if(!hit){const last=nameKey(name).split("|")[1];const c=list.filter(p=>nameKey(p.n).split("|")[1]===last);if(c.length===1)hit=c[0];}   // nicknames: unique last name on the team
+  return hit||null;
+}
+function attachPerf(roster,team,pd){
+  const list=pd&&pd.players&&pd.players[team];
+  return roster.map(pl=>{
+    const h=findPerf(list,pl.n);
+    if(!h)return{...pl,ev:pl.v,idx:null};
+    // QB values sit on the absolute book scale (6.0-9.5): blend seed judgment with the data value, never multiply
+    if(pl.p==="QB")return{...pl,idx:h.idx,smp:h.smp,ev:h.smp>=60?parseFloat(((pl.v+qbValueFromIdx(h.idx))/2).toFixed(2)):pl.v};
+    const mult=Math.min(2,Math.max(0.2,1+PERF_ALPHA*h.idx));
+    return{...pl,idx:h.idx,smp:h.smp,src:h.src,ev:parseFloat((pl.v*mult).toFixed(2))};
+  });
+}
+function qbValueFromIdx(idx){return parseFloat(Math.min(9.5,Math.max(5.0,QB_BOOK_AVG+QB_PTS_PER_SD*idx)).toFixed(1));}
+// bottom-up team rating from player data alone (predictive weights, 2018-25): QB idx 3.48 pts/SD, rush R 41.9, protection P -22.6; rescaled to SD 2.6
+function buildBottomUp(pd){
+  if(!pd||!pd.units)return null;
+  const raw={};
+  Object.keys(DEFAULT_RATINGS).forEach(t=>{
+    const u=pd.units[t]||{};const qbs=(pd.players&&pd.players[t]||[]).filter(p=>p.p==="QB").sort((a,b)=>b.smp-a.smp);
+    const qbz=qbs.length?qbs[0].idx:0;
+    raw[t]=3.48*qbz+41.9*(u.R||0)-22.6*(u.P||0);
+  });
+  const vals=Object.values(raw);const m=vals.reduce((a,b)=>a+b,0)/vals.length;const sd=Math.sqrt(vals.reduce((a,b)=>a+(b-m)*(b-m),0)/vals.length)||1;
+  const out={};Object.keys(raw).forEach(t=>{out[t]=parseFloat(((raw[t]-m)/sd*2.6).toFixed(2));});
+  return out;
+}
+
+// -- SHARED LINE FETCHER: Odds API direct when a key exists (per-book), else Claude web search. Home-margin convention. --
+async function fetchRawLines(){
+  const oKey=typeof localStorage!=="undefined"?localStorage.getItem("oapi"):null;
+  if(oKey){
+    try{
+      const r=await fetch("https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds/?apiKey="+oKey+"&regions=us&markets=spreads,totals&oddsFormat=american&bookmakers=draftkings,fanduel,caesars,betmgm");
+      if(r.ok){
+        const d=await r.json();
+        const lines=d.map(g=>{
+          const home=normTeam(g.home_team),away=normTeam(g.away_team);
+          const sp=[],byBook={},tots=[];
+          (g.bookmakers||[]).forEach(bk=>{
+            const sm=(bk.markets||[]).find(x=>x.key==="spreads");
+            // Odds API home point is negative when home favored; app convention is positive = home favored
+            if(sm){const o=(sm.outcomes||[]).find(x=>normTeam(x.name)===home);if(o&&o.point!=null){const v=-o.point;sp.push(v);byBook[bk.title]=v;}}
+            const tm=(bk.markets||[]).find(x=>x.key==="totals");
+            if(tm){const o=(tm.outcomes||[]).find(x=>x.name==="Over");if(o&&o.point!=null)tots.push(o.point);}
+          });
+          const dt=new Date(g.commence_time);
+          return{home,away,posted:sp.length?parseFloat((sp.reduce((a,b)=>a+b,0)/sp.length).toFixed(1)):null,ou:tots.length?parseFloat((tots.reduce((a,b)=>a+b,0)/tots.length).toFixed(1)):null,byBook,day:dt.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}),time:dt.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"}),ts:dt.getTime()};
+        }).filter(g=>g.home in DEFAULT_RATINGS&&g.away in DEFAULT_RATINGS&&g.posted!=null&&g.ts>Date.now()-6*3600*1000);
+        // the feed carries look-ahead lines for the whole season: keep only the next slate (earliest upcoming kickoff + 7 days)
+        const t0=lines.length?Math.min(...lines.map(g=>g.ts)):0;
+        const slate=lines.filter(g=>g.ts<t0+7*24*3600*1000);
+        if(slate.length)return{lines:slate,dropped:[],source:"odds"};
+      }
+    }catch(e){/* sandbox CORS or bad key -- fall through to web search */}
+  }
+  const raw=await claudeSearchJSON("Search the web for current NFL point spreads and totals (over/under) for all upcoming games this week (2026 season). Use a major sportsbook or consensus lines. Return ONLY a raw JSON array, no markdown: [{\"away\":\"Full Team Name\",\"home\":\"Full Team Name\",\"spread\":-3.5,\"ou\":44.5,\"day\":\"Sun Sep 6\",\"time\":\"1:00 PM ET\"}]. IMPORTANT spread convention: spread is how many points the HOME team is favored by (positive = home favored, negative = home underdog). Example: if the home team is a 3-point favorite, spread is 3. If the away team is favored by 2.5, spread is -2.5. Include every scheduled game you can find with both a spread and a total.",3000,true);
+  const rep=nameReport(raw.map(g=>({home:normTeam(g.home||""),away:normTeam(g.away||""),posted:g.spread!=null?parseFloat(g.spread):null,ou:g.ou!=null?parseFloat(g.ou):null,byBook:{},day:g.day||"",time:g.time||""})),x=>[x.home,x.away]);
+  return{lines:rep.matched.filter(g=>g.posted!=null),dropped:rep.dropped,source:"search"};
+}
+// per-week line snapshots: first sighting = open, latest sighting = close
+function persistLines(lines,wk){
+  try{
+    const key="wlines26_"+(wk||currentNflWeek());
+    const cur=JSON.parse(localStorage.getItem(key)||"{}");
+    lines.forEach(g=>{const k=g.home+"|"+g.away;const prev=cur[k]||{};cur[k]={open:prev.open!=null?prev.open:g.posted,openOu:prev.openOu!=null?prev.openOu:g.ou,posted:g.posted,ou:g.ou,ts:Date.now()};});
+    localStorage.setItem(key,JSON.stringify(cur));
+  }catch{}
+}
+// closing line value from the bettor's side, in points (positive = market moved toward you)
+function clvOf(side,posted,close){
+  if(side==null||posted==null||close==null)return null;
+  return parseFloat(((close-posted)*(side==="home"?1:-1)).toFixed(1));
+}
+function clvOuOf(take,posted,close){
+  if(!take||posted==null||close==null)return null;
+  const t=take.toUpperCase();if(t!=="OVER"&&t!=="UNDER")return null;
+  return parseFloat(((close-posted)*(t==="OVER"?1:-1)).toFixed(1));
+}
+
+// -- ALERTS TAB --
+// Lines fetched via Claude + web search (the artifact sandbox only allows api.anthropic.com;
+// direct Odds API calls are CORS-blocked here -- they work fine in local/deployed builds).
+function AlertsTab({ratings,onPick,calib}){
+  const[games,setGames]=useState([]);
+  const[loading,setLoading]=useState(false);
+  const[err,setErr]=useState(null);
+  const[fetched,setFetched]=useState(null);
+  const[min,setMin]=useState(0.5);
+  const[dropped,setDropped]=useState([]);
+  const hfa=hfaOf(calib);
+  const buildGame=(g,i)=>{
+    const hr=ratings[g.home],ar=ratings[g.away];
+    const myLine=hr!=null&&ar!=null?parseFloat(((hr+hfa)-ar).toFixed(2)):null;
+    const{stars,pct}=myLine!=null&&g.posted!=null?calcStars(myLine,g.posted):{stars:0,pct:"0"};
+    return{id:g.home+"-"+g.away+"-"+i,home:g.home,away:g.away,hr,ar,myLine,posted:g.posted,postedOU:g.ou,byBook:g.byBook||{},open:g.posted,cur:g.posted,mv:null,stars:parseFloat(stars),pct,day:g.day||"",time:g.time||""};
+  };
+
+  const fetch_=useCallback(async()=>{
+    if(loading)return;setLoading(true);setErr(null);
+    try{
+      const r=await fetchRawLines();
+      setDropped(r.dropped);
+      const out=r.lines.map(buildGame).sort((a,b)=>b.stars-a.stars);
+      if(!out.length)throw new Error("No games matched -- lines may not be posted yet");
+      persistLines(r.lines);
+      setGames(out);setFetched(new Date().toLocaleTimeString()+(r.source==="odds"?" (Odds API)":""));
+    }catch(e){setErr(e.message);}finally{setLoading(false);}
+  },[loading,ratings,hfa]);
+
+  const qual=games.filter(g=>g.stars>=min),none=games.filter(g=>g.stars<min);
+  return(
+    <div style={{paddingBottom:40}}>
+      <div style={{margin:"16px 20px 0",background:"#F8F6F2",border:"1px solid #1f2937",borderRadius:4,padding:"16px 18px"}}>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",justifyContent:"space-between"}}>
+          <div>
+            <div style={{color:"#E04500",fontSize:10,letterSpacing:3,fontFamily:"Space Mono,monospace",marginBottom:4}}>{fetched&&fetched.includes("Odds API")?"LIVE LINES -- ODDS API (DK / FD / CAESARS / MGM)":"LIVE LINES -- CLAUDE WEB SEARCH"}</div>
+            <div style={{color:"#7A8E9A",fontSize:11}}>Fetches current spreads + totals, scans all games vs your power ratings. Stars = disagreement with the market (11-yr backtest on consensus ratings: 50.4% ATS). Check the info coefficient in Results before treating them as bets.</div>
+          </div>
+          <button style={{...St.sm,color:"#E04500",borderColor:"#E0450030",background:"#FB4F1411",padding:"10px 20px",fontSize:11}} onClick={fetch_} disabled={loading}>{loading?"SEARCHING...":"FETCH LIVE LINES"}</button>
+        </div>
+        {err&&<div style={{...St.err,marginTop:8}}>{err}</div>}
+        {fetched&&<div style={{color:"#7A8E9A",fontSize:11,marginTop:6}}>Last fetch: {fetched}{calib&&calib.on&&calib.hfaAdj?" -- HFA "+hfa.toFixed(2)+" (calibrated)":""}</div>}
+        {dropped.length>0&&<div style={{color:"#C0392B",fontSize:10,marginTop:4,fontFamily:"Space Mono,monospace"}}>DROPPED {dropped.length} (unrecognized): {dropped.join(", ")}</div>}
+      </div>
+
+      {games.length>0&&(
+        <div style={{margin:"10px 20px 0",display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+          <span style={{color:"#7A8E9A",fontSize:10,letterSpacing:2,fontFamily:"Space Mono,monospace"}}>MIN STARS:</span>
+          {[0,0.5,1,1.5,2,2.5].map(s=>(
+            <button key={s} onClick={()=>setMin(s)} style={{...St.sm,padding:"4px 10px",color:min===s?"#E04500":"#7A8E9A",borderColor:min===s?"#E04500":"#C8C0B0",background:min===s?"#D4AF3311":"transparent"}}>
+              {s===0?"ALL":s+" star"}
+            </button>
+          ))}
+          <span style={{color:"#7A8E9A",fontSize:11,marginLeft:"auto"}}>{qual.length} plays -- {games.length} games</span>
+        </div>
+      )}
+
+      {qual.length>0&&<><H2>QUALIFYING PLAYS -- {qual.length}</H2>{qual.map(g=><AlertCard key={g.id} g={g} onPick={onPick}/>)}</>}
+      {none.length>0&&(
+        <><H2>NO EDGE -- {none.length} GAMES</H2>
+        <div style={{margin:"8px 20px 0",display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(320px,1fr))",gap:6}}>
+          {none.map(g=>(
+            <div key={g.id} style={{background:"#F8F6F2",border:"1px solid #1a1a1a",borderRadius:3,padding:"10px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div><div style={{color:"#7A8E9A",fontSize:11}}>{g.day}</div><div style={{color:"#5A9ACC",fontSize:12,marginTop:2}}>{g.away} @ {g.home}</div></div>
+              <div style={{textAlign:"right"}}>
+                <div style={{color:"#C8C0B0",fontFamily:"Space Mono,monospace",fontSize:11}}>{g.posted!=null?(g.posted>0?ABBR[g.home]+" -"+g.posted:ABBR[g.away]+" -"+Math.abs(g.posted)):"-"}</div>
+                {g.postedOU&&<div style={{color:"#DDD8CF",fontSize:10,fontFamily:"Space Mono,monospace"}}>o/u {g.postedOU}</div>}
+              </div>
+            </div>
+          ))}</div></>
+      )}
+
+      {games.length===0&&!loading&&(
+        <div style={{textAlign:"center",padding:"50px 20px"}}>
+          <div style={{fontSize:36,marginBottom:12}}>--</div>
+          <div style={{color:"#7A8E9A",fontSize:14,marginBottom:6}}>Hit FETCH LIVE LINES to auto-detect qualifying bets</div>
+          <div style={{color:"#C8C0B0",fontSize:12}}>Every game gets graded against your power ratings -- star plays float to the top</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AlertCard({g,onPick}){
+  const ec=g.stars>=2.5?"#1A6E3C":g.stars>=1.5?"#E04500":"#3A6A85";
+  const mc=g.mv>0?"#1A6E3C":g.mv<0?"#C0392B":"#6A8A9A";
+  return(
+    <div style={{margin:"8px 20px 0",background:"#FFFFFF",border:"1px solid "+ec+"44",borderRadius:4,padding:"16px 20px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:12}}>
+        <div>
+          <div style={{display:"flex",gap:8,marginBottom:8,alignItems:"center",flexWrap:"wrap"}}>
+            <Tag t={g.day}/><span style={{color:"#6A8A9A",fontSize:11}}>{g.time}</span>
+            <Stars s={g.stars} lg/><span style={{color:ec,fontFamily:"Space Mono,monospace",fontSize:13,fontWeight:700}}>{g.stars} star</span>
+            <span style={{color:"#7A8E9A",fontSize:11}}>({g.pct}%)</span>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:12}}>
+            <div style={{textAlign:"right"}}>
+              <div style={{color:"#5A7A90",fontSize:10}}>AWAY</div>
+              <div style={{color:"#1A3A5C",fontSize:15,fontWeight:700}}>{g.away}</div>
+              <div style={{color:"#E04500",fontSize:11,fontFamily:"Space Mono,monospace"}}>{(g.ar!=null?g.ar:DEFAULT_RATINGS[g.away]||0)>=0?"+":""}{g.ar!=null?g.ar:DEFAULT_RATINGS[g.away]||"?"}</div>
+            </div>
+            <div style={{color:"#7A8E9A",fontSize:18}}>@</div>
+            <div>
+              <div style={{color:"#5A7A90",fontSize:10}}>HOME</div>
+              <div style={{color:"#1A3A5C",fontSize:15,fontWeight:700}}>{g.home}</div>
+              <div style={{color:"#E04500",fontSize:11,fontFamily:"Space Mono,monospace"}}>{(g.hr!=null?g.hr:DEFAULT_RATINGS[g.home]||0)>=0?"+":""}{g.hr!=null?g.hr:DEFAULT_RATINGS[g.home]||"?"}</div>
+            </div>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+          <div style={{background:"#F8F6F2",border:"1px solid #1a1a1a",borderRadius:3,padding:"10px 14px",minWidth:110}}>
+            <div style={{color:"#6A8A9A",fontSize:9,letterSpacing:2,marginBottom:3}}>POSTED</div>
+            <div style={{color:"#0A1F35",fontSize:15,fontWeight:900,fontFamily:"Space Mono,monospace"}}>{g.posted!=null?(g.posted>0?ABBR[g.home]+" -"+g.posted:ABBR[g.away]+" -"+Math.abs(g.posted)):"--"}</div>
+            {g.mv!=null&&Math.abs(g.mv)>0&&<div style={{color:mc,fontSize:10,fontFamily:"Space Mono,monospace",marginTop:3}}>{g.mv>0?"up ":"down "}{Math.abs(g.mv)}</div>}
+            {g.postedOU&&<div style={{color:"#6A8A9A",fontSize:10,fontFamily:"Space Mono,monospace",marginTop:4}}>o/u {g.postedOU}</div>}
+          </div>
+          <div style={{background:"#F8F6F2",border:"1px solid "+ec+"44",borderRadius:3,padding:"10px 14px",minWidth:110}}>
+            <div style={{color:"#6A8A9A",fontSize:9,letterSpacing:2,marginBottom:3}}>MY LINE</div>
+            <div style={{color:ec,fontSize:15,fontWeight:900,fontFamily:"Space Mono,monospace"}}>{g.myLine!=null?(g.myLine>0?ABBR[g.home]+" -"+g.myLine:ABBR[g.away]+" -"+Math.abs(g.myLine)):"--"}</div>
+            <div style={{color:"#C8C0B0",fontSize:10,marginTop:3}}>diff: {g.myLine!=null&&g.posted!=null?Math.abs((g.myLine-g.posted).toFixed(1)):"-"} pts</div>
+          </div>
+        </div>
+      </div>
+      {Object.keys(g.byBook).length>0&&(
+        <div style={{marginTop:10,paddingTop:8,borderTop:"1px solid #1a1a1a",display:"flex",gap:6,flexWrap:"wrap"}}>
+          {Object.entries(g.byBook).map(([bk,ln])=>(
+            <span key={bk} style={{background:"#F8F6F2",borderRadius:2,padding:"3px 8px",fontSize:11,color:"#6A8A9A"}}>{bk}: <span style={{color:"#7ABAE5",fontFamily:"Space Mono,monospace"}}>{ln>0?ABBR[g.home]+" -"+ln:ABBR[g.away]+" -"+Math.abs(ln)}</span></span>
+          ))}
+        </div>
+      )}
+      <button style={{...St.btn,marginTop:12,fontSize:11,padding:"9px"}} onClick={()=>onPick(g)}>OPEN IN ANALYZER</button>
+    </div>
+  );
+}
+
+// -- ROSTER PANEL (Walters player values) --
+const GROUP_ORDER=["QB","RB","REC","OL","DL","LB","DB","ST"];
+const GROUP_LABEL={QB:"QUARTERBACKS",RB:"RUNNING BACKS",REC:"RECEIVERS (WR/TE)",OL:"OFFENSIVE LINE",DL:"DEFENSIVE LINE / EDGE",LB:"LINEBACKERS",DB:"SECONDARY",ST:"SPECIALISTS"};
+
+function loadRosterCache(team){
+  try{const raw=localStorage.getItem("wroster_"+(ABBR[team]||team));if(!raw)return null;return JSON.parse(raw);}catch{return null;}
+}
+function saveRosterCache(team,players){
+  try{localStorage.setItem("wroster_"+(ABBR[team]||team),JSON.stringify({ts:Date.now(),players}));}catch{}
+}
+
+async function fetchRosterAPI(team){
+  const pr="Search the web for the "+team+" current 53-man roster for the 2026 NFL season (final roster after August 2026 cuts). Find every player and their role. Return ONLY a raw JSON array, no markdown, no explanation: [{\"n\":\"Full Name\",\"p\":\"POS\",\"v\":0.0,\"d\":1}] where p is exactly one of QB,RB,FB,WR,TE,OT,G,C,EDGE,DT,LB,CB,S,K,P,LS and d is depth order at that position (1=starter, 2=primary backup, etc). v is the player's Billy Walters point value on the NFL spread using this exact calibration: starting QBs 6.0-9.5 (elite 9.0+, average 7.5-8.0, weak 6.0-7.0); backup QBs 4.5-7.0; elite non-QB superstars 2.0-3.0 (e.g. a game-wrecking edge rusher is 2.5); Pro Bowl caliber starters 1.2-2.0 (an elite OT is about 1.3); solid starters 0.5-1.2; rotational players 0.2-0.5; backups 0.1-0.3; deep depth and most special teamers 0.0-0.1. Judge each value on the player's current 2026 ability and importance to this specific team. Include ALL roster players, about 53.";
+  const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:6000,tools:[{type:"web_search_20250305",name:"web_search"}],messages:[{role:"user",content:pr}]})});
+  const data=await res.json();
+  if(data.error)throw new Error(data.error.message||"API error");
+  const txt=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n");
+  const m=txt.match(/\[[\s\S]*\]/);
+  if(!m)throw new Error("No roster JSON in response");
+  const players=JSON.parse(m[0]).filter(p=>p.n&&p.p);
+  players.forEach(p=>{p.v=parseFloat(p.v)||0;p.d=parseInt(p.d)||9;});
+  return players;
+}
+
+async function fetchPracticeAPI(away,home){
+  const pr="Search the web for the official NFL injury report and Wednesday-Friday practice participation for the upcoming "+away+" at "+home+" game (2026 season). Return ONLY raw JSON, no markdown: {\"away\":[{\"n\":\"Player Name\",\"p\":\"POS\",\"status\":\"Out\"|\"Doubtful\"|\"Questionable\",\"practice\":\"DNP\"|\"LP\"|\"FP\"}],\"home\":[...]}. practice = most recent practice participation (DNP=did not practice, LP=limited, FP=full). Include every player on the report, including those with no game designation (status null) but a practice entry. If no report is available yet return {\"away\":[],\"home\":[]}.";
+  const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:2500,tools:[{type:"web_search_20250305",name:"web_search"}],messages:[{role:"user",content:pr}]})});
+  const data=await res.json();
+  if(data.error)throw new Error(data.error.message||"API error");
+  const txt=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n");
+  const m=txt.match(/\{[\s\S]*\}/);
+  if(!m)throw new Error("No injury report JSON in response");
+  return JSON.parse(m[0]);
+}
+
+// calibrated on 2015-25 reports: Doubtful plays 1-2% of the time (= OUT); Questionable by last practice; no-tag DNP still costs ~12%
+function suggestStatus(status,practice,pos){
+  if(status==="Out"||status==="Doubtful")return "OUT";
+  if(status==="Questionable"){
+    if(practice==="DNP")return "Q55";
+    if(practice==="LP")return pos==="QB"?"Q55":"Q30";
+    return "Q15";
+  }
+  if(practice==="DNP")return "Q15";
+  return "IN";
+}
+
+function RosterPanel({team,roster,statuses,onStatus,onFetch,fetching,delta,cacheTs}){
+  const[open,setOpen]=useState({QB:true});
+  const abbr=ABBR[team]||team;
+  const groups={};
+  roster.forEach(p=>{const g=POS_GROUP[p.p]||"ST";(groups[g]=groups[g]||[]).push(p);});
+  Object.values(groups).forEach(a=>a.sort((x,y)=>x.d-y.d||y.v-x.v));
+  const hasFull=roster.length>2;
+  const age=cacheTs?Math.floor((Date.now()-cacheTs)/3600000):null;
+  const STATUSES=["IN","Q15","Q30","Q55","OUT"];
+  const stClr=s=>s==="IN"?"#1A6E3C":s==="OUT"?"#C0392B":"#E04500";
+  return (
+    <div style={{border:"1px solid #DDD8CF",borderRadius:4,marginBottom:10,background:"#FDFCFA"}}>
+      <div style={{padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,borderBottom:"1px solid #EEE9E0"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <span style={{fontFamily:"Oswald,sans-serif",fontWeight:600,fontSize:14,color:"#0A1F35"}}>{abbr} ROSTER</span>
+          {delta.total>0&&<span style={{fontFamily:"Space Mono,monospace",fontSize:12,fontWeight:700,color:"#C0392B"}}>-{delta.total} pts</span>}
+          {delta.stacked.length>0&&<Tag t={"STACK x"+delta.stacked.join(",")} c="#C0392B"/>}
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          {age!==null&&<span style={{fontFamily:"Space Mono,monospace",fontSize:9,color:"#C8C0B0"}}>{age<1?"fresh":age+"h old"}</span>}
+          <button style={{...St.sm,fontSize:9,padding:"4px 10px"}} onClick={onFetch} disabled={fetching}>
+            {fetching?"FETCHING...":hasFull?"REFRESH":"FETCH FULL ROSTER"}
+          </button>
+        </div>
+      </div>
+      {!hasFull&&(
+        <div style={{padding:"6px 14px 2px",fontFamily:"Space Mono,monospace",fontSize:9,color:"#C8C0B0"}}>
+          QB SEED ONLY -- fetch full 53 for all player values
+        </div>
+      )}
+      <div style={{padding:"4px 14px 2px",fontFamily:"Space Mono,monospace",fontSize:8,color:"#C8C0B0"}}>
+        Q levels = expected value loss net of the backup, calibrated on 36,723 reports (2015-25): Q15 = Questionable+full practice / no-tag DNP; Q30 = Questionable+limited; Q55 = Questionable+DNP or a Questionable QB; Doubtful = OUT (plays 1-2%)
+      </div>
+      {GROUP_ORDER.filter(g=>groups[g]).map(g=>(
+        <div key={g}>
+          <button onClick={()=>setOpen(o=>({...o,[g]:!o[g]}))} style={{width:"100%",background:"transparent",border:"none",borderTop:"1px solid #F2EEE6",padding:"7px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+            <span style={{fontFamily:"Space Mono,monospace",fontSize:9,letterSpacing:2,color:"#7A8E9A"}}>{GROUP_LABEL[g]} ({groups[g].length})</span>
+            <span style={{color:"#C8C0B0",fontSize:10}}>{open[g]?"-":"+"}</span>
+          </button>
+          {open[g]&&groups[g].map(pl=>{
+            const st=statuses[pl.n]||"IN";
+            const det=delta.details.find(x=>x.n===pl.n);
+            return (
+              <div key={pl.n} style={{padding:"6px 14px",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",background:st!=="IN"?"#FDF6F3":"transparent"}}>
+                <div style={{flex:"1 1 150px",minWidth:130}}>
+                  <span style={{fontSize:12,color:"#0A1F35",fontFamily:"Source Sans 3,sans-serif"}}>{pl.n}</span>
+                  <span style={{fontFamily:"Space Mono,monospace",fontSize:9,color:"#7A8E9A",marginLeft:6}}>{pl.p}{pl.d>1?pl.d:""}</span>
+                  <span style={{fontFamily:"Space Mono,monospace",fontSize:10,color:"#E04500",marginLeft:6}}>{(pl.ev!=null?pl.ev:pl.v).toFixed(1)}</span>
+                  {pl.idx!=null&&<span style={{fontFamily:"Space Mono,monospace",fontSize:8,marginLeft:4,padding:"1px 4px",borderRadius:2,background:pl.idx>0.5?"#D1FAE5":pl.idx<-0.5?"#FEE2E2":"#F3F4F6",color:pl.idx>0.5?"#1A6E3C":pl.idx<-0.5?"#C0392B":"#7A8E9A"}}>{pl.idx>0?"+":""}{pl.idx.toFixed(1)}sd{pl.src&&pl.src.includes("+")?" x2":""}</span>}
+                  {det&&det.st==="OUT"&&det.repl&&<span style={{fontFamily:"Space Mono,monospace",fontSize:9,color:"#7A8E9A",marginLeft:6}}>-&gt; {det.repl}</span>}
+                  {det&&<span style={{fontFamily:"Space Mono,monospace",fontSize:9,color:"#C0392B",marginLeft:6}}>-{det.loss}</span>}
+                </div>
+                <div style={{display:"flex",gap:3}}>
+                  {STATUSES.map(s=>(
+                    <button key={s} onClick={()=>onStatus(pl.n,s)} style={{background:st===s?stClr(s)+"22":"transparent",border:"1px solid "+(st===s?stClr(s):"#DDD8CF"),color:st===s?stClr(s):"#C8C0B0",fontSize:8,padding:"3px 6px",borderRadius:2,cursor:"pointer",fontFamily:"Space Mono,monospace",fontWeight:700}}>{s}</button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// -- ANALYZE TAB --
+function AnalyzeTab({ratings,bankroll,unit,onLog,prefill,calib,qbMode,setQbMode}){
+  const[neutral,setNeutral]=useState(false);
+  const hfa=neutral?0:hfaOf(calib);
+  const qbMult=qbMode==="AUTO"?((calib&&calib.nQb>=5)?calib.qbMult:1):parseFloat(qbMode||"1");
+  const[form,setForm]=useState({home:"",away:"",spread:"",ou:"",myLine:"",weather:"",hInj:"",aInj:"",notes:"",adjH:0,adjA:0});
+  const[sweOn,setSweOn]=useState({});
+  const[manual,setManual]=useState(false);
+  const[result,setResult]=useState(null);
+  const[loading,setLoading]=useState(false);
+  const[err,setErr]=useState(null);
+  const set=(k,v)=>setForm(f=>({...f,[k]:v}));
+
+  // -- roster / player-value state --
+  const[rosters,setRosters]=useState({});           // team -> [{n,p,v,d}]
+  const[rosterTs,setRosterTs]=useState({});          // team -> cache timestamp
+  const[statuses,setStatuses]=useState({});          // team -> {playerName: status}
+  const[fetchingR,setFetchingR]=useState({});        // team -> bool
+  const[gameWx,setGameWx]=useState({});              // {dome,hot,cold,wind} toggles
+  const[practiceLoading,setPracticeLoading]=useState(false);
+  const[practiceRpt,setPracticeRpt]=useState(null);
+  const[rosterErr,setRosterErr]=useState(null);
+
+  const[playerData,setPlayerData]=useState(()=>loadPlayerData());
+  const[pdOpen,setPdOpen]=useState(false);
+  const[pdText,setPdText]=useState("");
+  const[pdMsg,setPdMsg]=useState(null);
+  const importPlayerData=()=>{
+    try{
+      const j=JSON.parse(pdText);
+      if(!j.players)throw new Error("missing players");
+      const n=Object.values(j.players).reduce((a,l)=>a+l.length,0);
+      savePlayerData(j);setPlayerData(j);setPdOpen(false);setPdText("");
+      setPdMsg("Loaded "+n+" players ("+(j.source||"import")+", through week "+(j.through_week||"?")+")");
+    }catch(e){setPdMsg("Import failed: "+e.message);}
+  };
+  const[teamStats,setTeamStats]=useState({});
+  const[statsLoading,setStatsLoading]=useState(false);
+  const getRoster=useCallback((team)=>{
+    if(!team)return[];
+    let base=rosters[team];
+    if(!base){const c=loadRosterCache(team);base=(c&&c.players)?c.players:seedRoster(team);}
+    return attachPerf(base,team,playerData);
+  },[rosters,playerData]);
+  // sync QB values from the data index (book scale: 7.74 avg, 0.85 pts per SD)
+  const syncQb=(team)=>{
+    if(!team||!playerData)return;
+    const base=rosters[team]||(loadRosterCache(team)||{}).players||seedRoster(team);
+    const list=playerData.players&&playerData.players[team];
+    const next=base.map(p=>{if(p.p!=="QB")return p;const h=findPerf(list,p.n);return h&&h.smp>=60?{...p,v:qbValueFromIdx(h.idx),synced:true}:p;});
+    setRosters(r=>({...r,[team]:next}));setManual(false);
+  };
+
+  // hydrate cache ts on team pick
+  useEffect(()=>{
+    [form.home,form.away].forEach(t=>{
+      if(!t)return;
+      if(!rosters[t]){
+        const c=loadRosterCache(t);
+        if(c&&c.players){setRosters(r=>({...r,[t]:c.players}));setRosterTs(ts=>({...ts,[t]:c.ts}));}
+      }
+      if(!teamStats[t]){
+        const sc=loadStatsCache(t);
+        if(sc)setTeamStats(s=>({...s,[t]:sc}));
+      }
+    });
+  },[form.home,form.away,rosters,teamStats]);
+
+  const doFetchRoster=async(team)=>{
+    if(!team||fetchingR[team])return;
+    setFetchingR(f=>({...f,[team]:true}));setRosterErr(null);
+    try{
+      const players=await fetchRosterAPI(team);
+      setRosters(r=>({...r,[team]:players}));
+      setRosterTs(ts=>({...ts,[team]:Date.now()}));
+      saveRosterCache(team,players);
+    }catch(e){setRosterErr(team+": "+e.message);}
+    finally{setFetchingR(f=>({...f,[team]:false}));}
+  };
+
+  const setPlayerStatus=(team)=>(name,st)=>{
+    setStatuses(s=>({...s,[team]:{...(s[team]||{}),[name]:st}}));
+    setManual(false);
+  };
+
+  const doStats=async()=>{
+    if(!form.home||!form.away||statsLoading)return;
+    setStatsLoading(true);setRosterErr(null);
+    try{
+      const hC=loadStatsCache(form.home),aC=loadStatsCache(form.away);
+      if(hC&&aC){setTeamStats(s=>({...s,[form.home]:hC,[form.away]:aC}));}
+      else{
+        const r=await fetchTeamStatsAPI(form.away,form.home);
+        setTeamStats(s=>({...s,[form.home]:r.home,[form.away]:r.away}));
+        saveStatsCache(form.home,r.home);saveStatsCache(form.away,r.away);
+      }
+    }catch(e){setRosterErr("Team stats: "+e.message);}
+    finally{setStatsLoading(false);}
+  };
+
+  const doPractice=async()=>{
+    if(!form.home||!form.away||practiceLoading)return;
+    setPracticeLoading(true);setRosterErr(null);setPracticeRpt(null);
+    try{
+      const rpt=await fetchPracticeAPI(form.away,form.home);
+      setPracticeRpt(rpt);
+    }catch(e){setRosterErr("Practice report: "+e.message);}
+    finally{setPracticeLoading(false);}
+  };
+
+  const applyPractice=()=>{
+    if(!practiceRpt)return;
+    const apply=(team,list)=>{
+      const roster=getRoster(team);
+      const upd={};
+      (list||[]).forEach(item=>{
+        const match=roster.find(p=>p.n.toLowerCase()===item.n.toLowerCase()||p.n.toLowerCase().includes(item.n.toLowerCase())||item.n.toLowerCase().includes(p.n.toLowerCase()));
+        if(match)upd[match.n]=suggestStatus(item.status,item.practice,match.p||item.p);
+      });
+      if(Object.keys(upd).length)setStatuses(s=>({...s,[team]:{...(s[team]||{}),...upd}}));
+    };
+    apply(form.away,practiceRpt.away);
+    apply(form.home,practiceRpt.home);
+    setManual(false);
+  };
+
+  useEffect(()=>{
+    if(!prefill)return;
+    setForm(f=>({...f,home:prefill.home||"",away:prefill.away||"",spread:prefill.posted!=null?String(prefill.posted):"",ou:prefill.postedOU!=null?String(prefill.postedOU):""}));
+    setManual(false);setResult(null);
+  },[prefill]);
+
+  const hr=ratings[form.home],ar=ratings[form.away];
+  const hRoster=getRoster(form.home),aRoster=getRoster(form.away);
+  const hDelta=calcInjuryDelta(hRoster,statuses[form.home]||{},qbMult);
+  const aDelta=calcInjuryDelta(aRoster,statuses[form.away]||{},qbMult);
+  // per-QB weather W-factors, 0.15 pts each (book ch.22)
+  const qbWxOf=(team)=>{
+    const s=QB_SEED[team];if(!s||!s.qb1.wx)return 0;
+    let w=0;const x=s.qb1.wx;
+    if(gameWx.dome&&x.dome)w+=x.dome;
+    if(gameWx.hot&&x.hot)w+=x.hot;
+    if(gameWx.cold&&x.cold)w+=x.cold;
+    if(gameWx.wind&&x.wind)w+=x.wind;
+    return w*0.15;
+  };
+  const qbWxAdj=parseFloat((qbWxOf(form.home)-qbWxOf(form.away)).toFixed(2));
+  const autoLine=hr!=null&&ar!=null?parseFloat(((hr+hfa)-ar+Number(form.adjH)-Number(form.adjA)-hDelta.total+aDelta.total+qbWxAdj).toFixed(2)):null;
+  const modelOU0=calcModelTotal(teamStats[form.home],teamStats[form.away],hDelta,aDelta,gameWx);
+  const ouScalar=(calib&&calib.on)?(calib.ouScalar||1):1;
+  const modelOU=modelOU0?{...modelOU0,raw:modelOU0.total,total:parseFloat((modelOU0.total*ouScalar).toFixed(1))}:null;
+  const ouEdge=modelOU&&!isNaN(parseFloat(form.ou))?parseFloat((modelOU.total-parseFloat(form.ou)).toFixed(1)):null;
+  const ouLean=ouEdge==null?null:ouEdge>=4?"STRONG OVER":ouEdge>=2.5?"OVER":ouEdge<=-4?"STRONG UNDER":ouEdge<=-2.5?"UNDER":"NO EDGE";
+  const myL=manual?parseFloat(form.myLine):(autoLine??NaN);
+  const spL=parseFloat(form.spread);
+  const ouL=parseFloat(form.ou);
+
+  const sweAdj=Object.entries(sweOn).reduce((sum,[id,on])=>{
+    if(!on)return sum;
+    const f=SWE.find(x=>x.id===id);if(!f)return sum;
+    const mul=f.ben==="home"?1:f.ben==="visitor"||f.ben==="team"?-1:0;
+    return sum+(f.pts*mul/5);
+  },0);
+  const adjLine=!isNaN(myL)?parseFloat((myL+sweAdj).toFixed(2)):NaN;
+  const{stars,pct}=(!isNaN(adjLine)&&!isNaN(spL))?calcStars(adjLine,spL):{stars:0,pct:"0"};
+  const ec=stars>=2?"#1A6E3C":stars>=1?"#E04500":"#7ABAE5";
+
+  const run=async()=>{
+    setLoading(true);setErr(null);setResult(null);
+    try{
+      const g={...form,spread:spL,myLine:myL,sweAdj:parseFloat(sweAdj.toFixed(2)),adjLine,stars,pct};
+      const ouSection=!isNaN(ouL)?"POSTED O/U: "+ouL+"\nNotes: analyze whether the total looks high or low given team styles and weather.":"O/U: not provided";
+      const injLine=(lbl,dl)=>{
+        if(!dl.details.length)return lbl+" roster: full strength";
+        const items=dl.details.map(d=>d.n+" ("+d.p+") "+d.st+(d.repl?" repl by "+d.repl:"")+" -"+d.loss+"pts").join("; ");
+        return lbl+" roster delta: -"+dl.total+" pts ["+items+"]"+(dl.stacked.length?" STACK MULT applied: "+dl.stacked.join(","):"");
+      };
+      const matchupSection=(playerData&&playerData.units&&playerData.units[form.home]&&playerData.units[form.away])?(()=>{const lg=playerData.league_pressure_rate||0.247;const hu=playerData.units[form.home],au=playerData.units[form.away];return "\nMatchup (additive, already in ratings): expected pressure on HOME QB "+((lg+(au.R||0)+(hu.P||0))*100).toFixed(0)+"% vs league "+(lg*100).toFixed(0)+"%; on AWAY QB "+((lg+(hu.R||0)+(au.P||0))*100).toFixed(0)+"%";})():"";
+      const rosterSection=injLine("HOME",hDelta)+"\n"+injLine("AWAY",aDelta)+matchupSection+(qbWxAdj!==0?"\nQB weather adj: "+(qbWxAdj>0?"+":"")+qbWxAdj+" pts (home perspective)":"")+(modelOU?"\nO/U model total: "+modelOU.total+(ouLean&&ouLean!=="NO EDGE"?" (model lean: "+ouLean+")":""):"");
+      const pr="You are an NFL betting analyst using the Billy Walters system. Return ONLY valid JSON, no markdown.\nGAME: "+g.away+" @ "+g.home+"\nPosted: "+(spL>0?g.home+" -"+spL:g.away+" -"+Math.abs(spL))+"\nMy line: "+myL+" | SWE adj: "+sweAdj.toFixed(2)+" | Adjusted: "+adjLine+"\nStars: "+stars+" ("+pct+"%)\n"+rosterSection+"\nExtra home inj notes: "+(g.hInj||"none")+" | Extra away inj notes: "+(g.aInj||"none")+"\nWeather: "+(g.weather||"unknown")+" | Notes: "+(g.notes||"none")+"\n"+ouSection+"\nBankroll: $"+bankroll+" | Unit: $"+unit+"\nReturn: {\"recommendation\":\"FADE HOME\"|\"TAKE HOME\"|\"FADE AWAY\"|\"TAKE AWAY\"|\"NO BET\",\"confidence\":\"HIGH\"|\"MEDIUM\"|\"LOW\",\"edgeAnalysis\":\"2-3 sentences\",\"keyFactors\":[\"f1\",\"f2\",\"f3\"],\"injuryImpact\":\"brief\",\"lineAdvice\":\"timing and why\",\"suggestedBetSize\":number,\"warningFlags\":[\"flag\"],\"ou_take\":\"OVER\"|\"UNDER\"|\"NO BET\",\"ou_reasoning\":\"1-2 sentences on the total\"}";
+      const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1100,messages:[{role:"user",content:pr}]})});
+      const data=await res.json();
+      const raw=data.content?.find(b=>b.type==="text")?.text||"{}";
+      const r=JSON.parse(raw.replace(/```json|```/g,"").trim());
+      r.suggestedBetSize=Math.round((r.suggestedBetSize||(stars>=1?unit*stars:0))/50)*50;
+      setResult({...r,game:g});
+      // auto-log every analysis (NO BET included, for formula accuracy); upserts by matchup
+      const isNoBet=/NO BET/i.test(r.recommendation||"");
+      const mechSide=stars>=0.5?(adjLine>spL?"home":adjLine<spL?"away":null):null;
+      onLog({
+        game:{...g,hInjPts:hDelta.total,aInjPts:aDelta.total,
+          baseLine:parseFloat((adjLine+hDelta.total-aDelta.total).toFixed(2)),
+          hQb:hDelta.qb,hOther:hDelta.other,aQb:aDelta.qb,aOther:aDelta.other,qbMult},
+        mech:{side:mechSide,stars,line:adjLine,posted:spL},
+        result:r,
+        betSize:isNoBet?0:r.suggestedBetSize,
+        ouRec:r.ou_take,
+        modelOU:modelOU?modelOU.total:null,
+        outcome:null,ouOutcome:null,hs:null,as:null,ratingApplied:false,
+        ts:Date.now()
+      });
+    }catch(e){setErr(e.message);}finally{setLoading(false);}
+  };
+
+  return(
+    <div style={{paddingBottom:40}}>
+      <div style={{margin:"16px 20px 0",background:"#FFFFFF",border:"1px solid #FB4F1422",borderRadius:4,padding:"20px"}}>
+        <div style={{color:"#3A6A85",fontSize:9,letterSpacing:5,fontFamily:"Space Mono,monospace",marginBottom:16}}>GAME SETUP</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+          {[["away","AWAY TEAM"],["home","HOME TEAM"]].map(([k,lbl])=>(
+            <div key={k}>
+              <div style={St.lbl}>{lbl}</div>
+              <select style={St.sel} value={form[k]} onChange={e=>{set(k,e.target.value);setManual(false);}}>
+                <option value="">Select...</option>
+                {Object.keys(ratings).sort().map(t=><option key={t} value={t}>{t} ({ratings[t]>=0?"+":""}{ratings[t]})</option>)}
+              </select>
+            </div>
+          ))}
+        </div>
+
+        {form.home&&form.away&&hr!=null&&ar!=null&&(
+          <div style={{background:"#F8F6F2",border:"1px solid #1f1f1f",borderRadius:3,padding:"12px 14px",marginBottom:12}}>
+            {[[form.away,ar,false,aDelta],[form.home,hr,true,hDelta]].map(([t,r,ih,dl])=>(
+              <div key={t} style={{display:"flex",justifyContent:"space-between",padding:"3px 0"}}>
+                <span style={{color:"#3A6A85",fontSize:12}}>{t}{ih&&<span style={{color:"#7A8E9A",fontSize:10}}> +{hfa.toFixed(2)} HFA</span>}{dl.total>0&&<span style={{color:"#C0392B",fontSize:10,fontFamily:"Space Mono,monospace"}}> INJ -{dl.total}</span>}</span>
+                <span style={{color:"#E04500",fontFamily:"Space Mono,monospace",fontSize:13,fontWeight:700}}>{(ih?r+hfa:r)>=0?"+":""}{ih?(r+hfa).toFixed(2):r}</span>
+              </div>
+            ))}
+            <div style={{display:"flex",justifyContent:"space-between",borderTop:"1px solid #2a2a2a",paddingTop:6,marginTop:4}}>
+              <span style={{color:"#1A3A5C",fontSize:12,fontWeight:600}}>Base Line</span>
+              <span style={{color:autoLine>=0?"#1A6E3C":"#C0392B",fontFamily:"Space Mono,monospace",fontSize:15,fontWeight:900}}>{autoLine>=0?ABBR[form.home]+" -"+autoLine:ABBR[form.away]+" -"+Math.abs(autoLine)}</span>
+            </div>
+          </div>
+        )}
+
+        {form.home&&form.away&&(
+          <div style={{marginBottom:12}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8,marginBottom:8}}>
+              <div style={{color:"#E04500",fontSize:10,letterSpacing:3,fontFamily:"Space Mono,monospace"}}>PLAYER VALUES -- WALTERS CH.22</div>
+              <div style={{display:"flex",gap:4,alignItems:"center"}}>
+                <span style={{...St.lbl,marginBottom:0,marginRight:2}}>QB SCALE</span>
+                {[["1","BOOK 1x"],["1.5","1.5x"],["2","2x"],["AUTO","AUTO"]].map(([v,l])=>(
+                  <button key={v} onClick={()=>{setQbMode(v);setManual(false);}} style={{background:qbMode===v?"#D4AF3322":"transparent",border:"1px solid "+(qbMode===v?"#E04500":"#DDD8CF"),color:qbMode===v?"#E04500":"#7A8E9A",fontSize:8,padding:"3px 7px",borderRadius:2,cursor:"pointer",fontFamily:"Space Mono,monospace",fontWeight:700}}>{l}{v==="AUTO"&&calib&&calib.nQb>=5?" "+calib.qbMult+"x":""}</button>
+                ))}
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                <button style={{...St.sm,fontSize:9}} onClick={doPractice} disabled={practiceLoading}>
+                  {practiceLoading?"CHECKING...":"FETCH PRACTICE REPORT"}
+                </button>
+                {practiceRpt&&((practiceRpt.away||[]).length+(practiceRpt.home||[]).length)>0&&(
+                  <button style={{...St.sm,fontSize:9,color:"#1A6E3C",borderColor:"#1A6E3C66"}} onClick={applyPractice}>
+                    APPLY {((practiceRpt.away||[]).length+(practiceRpt.home||[]).length)} SUGGESTIONS
+                  </button>
+                )}
+              </div>
+            </div>
+            {practiceRpt&&((practiceRpt.away||[]).length+(practiceRpt.home||[]).length)===0&&(
+              <div style={{fontFamily:"Space Mono,monospace",fontSize:9,color:"#C8C0B0",marginBottom:8}}>No injury report posted yet (reports go up Wed-Fri game week)</div>
+            )}
+            {rosterErr&&<div style={{...St.err,marginBottom:8,fontSize:11}}>{rosterErr}</div>}
+            <RosterPanel team={form.away} roster={aRoster} statuses={statuses[form.away]||{}} onStatus={setPlayerStatus(form.away)} onFetch={()=>doFetchRoster(form.away)} fetching={!!fetchingR[form.away]} delta={aDelta} cacheTs={rosterTs[form.away]}/>
+            <RosterPanel team={form.home} roster={hRoster} statuses={statuses[form.home]||{}} onStatus={setPlayerStatus(form.home)} onFetch={()=>doFetchRoster(form.home)} fetching={!!fetchingR[form.home]} delta={hDelta} cacheTs={rosterTs[form.home]}/>
+
+            <div style={{background:"#FDFCFA",border:"1px solid #DDD8CF",borderRadius:4,padding:"10px 14px",marginBottom:10}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+                <span style={{color:"#E04500",fontSize:10,letterSpacing:3,fontFamily:"Space Mono,monospace"}}>PLAYER DATA{playerData?" -- "+(playerData.source||"import")+" thru wk "+(playerData.through_week||"?"):" -- none loaded"}</span>
+                <div style={{display:"flex",gap:6}}>
+                  {playerData&&<button style={{...St.sm,fontSize:9,padding:"4px 10px",color:"#1A6E3C",borderColor:"#1A6E3C66"}} onClick={()=>{syncQb(form.away);syncQb(form.home);}}>SYNC QB VALUES FROM DATA</button>}
+                  <button style={{...St.sm,fontSize:9,padding:"4px 10px"}} onClick={()=>setPdOpen(o=>!o)}>{pdOpen?"CLOSE":"IMPORT"}</button>
+                </div>
+              </div>
+              {pdMsg&&<div style={{fontFamily:"Space Mono,monospace",fontSize:9,color:pdMsg.startsWith("Import failed")?"#C0392B":"#1A6E3C",marginTop:6}}>{pdMsg}</div>}
+              {pdOpen&&(
+                <div style={{marginTop:8}}>
+                  <div style={{fontSize:11,color:"#7A8E9A",marginBottom:6}}>Paste the JSON from <span style={{fontFamily:"Space Mono,monospace"}}>player_pipeline.py</span> (free nflverse/PFR data; add a saved ESPN win-rates page via --espn; PFF export via --pff). Player values become base x (1 + 0.25 x idx); idx is standard deviations vs position average.</div>
+                  <textarea value={pdText} onChange={e=>setPdText(e.target.value)} placeholder='{"season":2026,"through_week":3,"units":{...},"players":{...}}' style={{...St.inp,width:"100%",minHeight:90,fontFamily:"Space Mono,monospace",fontSize:10}}/>
+                  <button style={{...St.sm,marginTop:6,color:"#1A6E3C",borderColor:"#1A6E3C66"}} onClick={importPlayerData} disabled={!pdText.trim()}>LOAD</button>
+                </div>
+              )}
+              {playerData&&playerData.units&&playerData.units[form.home]&&playerData.units[form.away]&&(()=>{
+                const lg=playerData.league_pressure_rate||0.247;const hu=playerData.units[form.home],au=playerData.units[form.away];
+                const onHome=(lg+(au.R||0)+(hu.P||0))*100,onAway=(lg+(hu.R||0)+(au.P||0))*100;
+                const top=t=>((playerData.players[t]||[]).filter(p=>p.p==="EDGE"||p.p==="DT").sort((a,b)=>b.idx-a.idx).slice(0,2).map(p=>p.n+" "+(p.idx>0?"+":"")+p.idx.toFixed(1)).join(", "));
+                return(
+                  <div style={{marginTop:8,fontFamily:"Space Mono,monospace",fontSize:10,color:"#5A7A90",lineHeight:1.7}}>
+                    <div><span style={{color:"#0A1F35",fontWeight:700}}>MATCHUP -- PASS RUSH vs PROTECTION</span> (additive; already in both ratings -- no line adjustment)</div>
+                    <div>{ABBR[form.away]} rush vs {ABBR[form.home]} OL: expected pressure <span style={{color:onHome>lg*100+3?"#C0392B":onHome<lg*100-3?"#1A6E3C":"#0A1F35",fontWeight:700}}>{onHome.toFixed(0)}%</span> (lg {(lg*100).toFixed(0)}%){hu.ol&&hu.ol.missing_last_week?" -- "+ABBR[form.home]+" OL missing "+hu.ol.missing_last_week+" usual starter(s)":""} -- top rushers: {top(form.away)||"n/a"}</div>
+                    <div>{ABBR[form.home]} rush vs {ABBR[form.away]} OL: expected pressure <span style={{color:onAway>lg*100+3?"#C0392B":onAway<lg*100-3?"#1A6E3C":"#0A1F35",fontWeight:700}}>{onAway.toFixed(0)}%</span>{au.ol&&au.ol.missing_last_week?" -- "+ABBR[form.away]+" OL missing "+au.ol.missing_last_week+" usual starter(s)":""} -- top rushers: {top(form.home)||"n/a"}</div>
+                    {(hu.espn||au.espn)&&<div style={{color:"#7A8E9A"}}>ESPN win rates{hu.P_espn!=null?" (blended 50/50 into units)":""}: {ABBR[form.away]} PRWR {au.espn&&au.espn.prwr!=null?au.espn.prwr+"%":"--"} / PBWR {au.espn&&au.espn.pbwr!=null?au.espn.pbwr+"%":"--"} -- {ABBR[form.home]} PRWR {hu.espn&&hu.espn.prwr!=null?hu.espn.prwr+"%":"--"} / PBWR {hu.espn&&hu.espn.pbwr!=null?hu.espn.pbwr+"%":"--"}</div>}
+                    {hu.run&&au.run&&<div style={{color:"#7A8E9A"}}>RUN GAME (success rate, lg {(hu.run.league*100).toFixed(0)}%): {ABBR[form.away]} rush O {(au.run.rushO_succ*100).toFixed(0)}% vs {ABBR[form.home]} run D allows {(hu.run.rushD_succ*100).toFixed(0)}% -- {ABBR[form.home]} rush O {(hu.run.rushO_succ*100).toFixed(0)}% vs {ABBR[form.away]} run D allows {(au.run.rushD_succ*100).toFixed(0)}%{(hu.espn&&hu.espn.rbwr!=null)||(au.espn&&au.espn.rbwr!=null)?" -- ESPN RBWR "+ABBR[form.away]+" "+(au.espn&&au.espn.rbwr!=null?au.espn.rbwr+"%":"--")+" / "+ABBR[form.home]+" "+(hu.espn&&hu.espn.rbwr!=null?hu.espn.rbwr+"%":"--"):""}</div>}
+                  </div>
+                );
+              })()}
+            </div>
+
+            <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginTop:2,marginBottom:10}}>
+              <span style={{...St.lbl,marginBottom:0}}>GAME CONDITIONS (QB WX, 0.15/W)</span>
+              {[["dome","DOME"],["hot","HOT 85F+"],["cold","COLD <32F"],["wind","WIND 15+"]].map(([k,lbl])=>(
+                <button key={k} onClick={()=>{setGameWx(w=>({...w,[k]:!w[k]}));setManual(false);}} style={{background:gameWx[k]?"#D4AF3322":"transparent",border:"1px solid "+(gameWx[k]?"#E04500":"#DDD8CF"),color:gameWx[k]?"#E04500":"#7A8E9A",fontSize:9,padding:"4px 9px",borderRadius:3,cursor:"pointer",fontFamily:"Space Mono,monospace"}}>{lbl}</button>
+              ))}
+              {qbWxAdj!==0&&<span style={{fontFamily:"Space Mono,monospace",fontSize:11,fontWeight:700,color:qbWxAdj>0?"#1A6E3C":"#C0392B"}}>QB WX {qbWxAdj>0?"+":""}{qbWxAdj}</span>}
+              <button onClick={()=>{setNeutral(n=>!n);setManual(false);}} style={{background:neutral?"#D4AF3322":"transparent",border:"1px solid "+(neutral?"#E04500":"#DDD8CF"),color:neutral?"#E04500":"#7A8E9A",fontSize:9,padding:"4px 9px",borderRadius:3,cursor:"pointer",fontFamily:"Space Mono,monospace",marginLeft:6}}>NEUTRAL SITE (HFA 0)</button>
+            </div>
+
+            <div style={{background:"#FDFCFA",border:"1px solid #DDD8CF",borderRadius:4,padding:"12px 14px",marginBottom:12}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+                <span style={{color:"#E04500",fontSize:10,letterSpacing:3,fontFamily:"Space Mono,monospace"}}>O/U MODEL -- MATCHUP AVG</span>
+                <button style={{...St.sm,fontSize:9,padding:"4px 10px"}} onClick={doStats} disabled={statsLoading}>{statsLoading?"FETCHING...":(teamStats[form.home]&&teamStats[form.away])?"REFRESH STATS":"FETCH TEAM STATS"}</button>
+              </div>
+              {modelOU?(
+                <div style={{marginTop:8}}>
+                  <div style={{display:"flex",gap:14,flexWrap:"wrap",alignItems:"baseline"}}>
+                    <span style={{fontFamily:"Space Mono,monospace",fontSize:11,color:"#7A8E9A"}}>{ABBR[form.away]} {modelOU.aPts} + {ABBR[form.home]} {modelOU.hPts}{modelOU.wx!==0?" wx "+(modelOU.wx>0?"+":"")+modelOU.wx:""}</span>
+                    <span style={{fontFamily:"Space Mono,monospace",fontSize:16,fontWeight:900,color:"#0A1F35"}}>MODEL {modelOU.total}</span>
+                    {ouScalar!==1&&<span style={{fontFamily:"Space Mono,monospace",fontSize:9,color:"#7A8E9A"}}>cal x{ouScalar} (raw {modelOU.raw})</span>}
+                    {!isNaN(parseFloat(form.ou))&&<span style={{fontFamily:"Space Mono,monospace",fontSize:12,color:"#7A8E9A"}}>posted {form.ou}</span>}
+                    {ouLean&&ouLean!=="NO EDGE"&&<span style={{fontFamily:"Space Mono,monospace",fontSize:13,fontWeight:900,color:ouLean.includes("OVER")?"#1A6E3C":"#C0392B"}}>{ouLean} ({ouEdge>0?"+":""}{ouEdge})</span>}
+                    {ouLean==="NO EDGE"&&<span style={{fontFamily:"Space Mono,monospace",fontSize:11,color:"#C8C0B0"}}>no edge ({ouEdge>0?"+":""}{ouEdge})</span>}
+                  </div>
+                </div>
+              ):(
+                <div style={{marginTop:6,fontFamily:"Space Mono,monospace",fontSize:9,color:"#C8C0B0"}}>Fetch team PPG/PAPG -- model builds independent total (injury + weather coupled)</div>
+              )}
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              {[["adjA",form.away||"AWAY"],["adjH",form.home||"HOME"]].map(([k,lbl])=>(
+                <div key={k}>
+                  <div style={St.lbl}>{lbl.slice(0,12).toUpperCase()} MANUAL OVERRIDE <span style={{color:"#E04500",fontFamily:"Space Mono,monospace"}}>{form[k]>=0?"+":""}{form[k]}</span></div>
+                  <input type="range" min="-5" max="5" step="0.5" value={form[k]} onChange={e=>{set(k,e.target.value);setManual(false);}} style={{width:"100%",accentColor:"#E04500",marginTop:4}}/>
+                  <div style={{display:"flex",justifyContent:"space-between",color:"#C8C0B0",fontSize:10,fontFamily:"Space Mono,monospace"}}><span>-5</span><span>0</span><span>+5</span></div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
+          <div>
+            <div style={St.lbl}>MY LINE <span style={{color:"#C8C0B0"}}>(auto)</span></div>
+            <input style={{...St.inp,borderColor:manual?"#E04500":"#DDD8CF"}} type="number" step="0.5"
+              value={manual?form.myLine:(isNaN(myL)?"":myL)} onChange={e=>{setManual(true);set("myLine",e.target.value);}} placeholder="Auto"/>
+          </div>
+          <div>
+            <div style={St.lbl}>POSTED SPREAD</div>
+            <input style={St.inp} type="number" step="0.5" placeholder="-3 or +4.5" value={form.spread} onChange={e=>set("spread",e.target.value)}/>
+          </div>
+          <div>
+            <div style={St.lbl}>OVER/UNDER</div>
+            <input style={St.inp} type="number" step="0.5" placeholder="e.g. 44.5" value={form.ou} onChange={e=>set("ou",e.target.value)}/>
+          </div>
+        </div>
+      </div>
+
+      <div style={{margin:"10px 20px 0",background:"#FFFFFF",border:"1px solid #1a1a1a",borderRadius:4,padding:"16px 20px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:8}}>
+          <div style={{color:"#E04500",fontSize:10,letterSpacing:4,fontFamily:"Space Mono,monospace"}}>S/W/E FACTORS -- WALTERS CH.22</div>
+          {sweAdj!==0&&<span style={{color:sweAdj>0?"#1A6E3C":"#C0392B",fontFamily:"Space Mono,monospace",fontSize:12,fontWeight:700}}>ADJ: {sweAdj>0?"+":""}{sweAdj.toFixed(2)} pts</span>}
+        </div>
+        {["S","W","E"].map(cat=>(
+          <div key={cat} style={{marginBottom:10}}>
+            <div style={{color:"#7A8E9A",fontSize:9,letterSpacing:3,fontFamily:"Space Mono,monospace",marginBottom:6}}>{cat==="S"?"SITUATIONAL":cat==="W"?"WEATHER":"EMOTIONAL"}</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+              {SWE.filter(f=>f.cat===cat).map(f=>{
+                const on=sweOn[f.id];
+                return <button key={f.id} onClick={()=>setSweOn(s=>({...s,[f.id]:!s[f.id]}))} style={{background:on?"#D4AF3322":"transparent",border:"1px solid "+(on?"#E04500":"#DDD8CF"),color:on?"#E04500":"#7A8E9A",fontSize:10,padding:"4px 9px",borderRadius:3,cursor:"pointer",fontFamily:"Space Mono,monospace"}}>
+                  {f.label} <span style={{color:on?"#7ABAE5":"#DDD8CF"}}>({f.pts>0?"+":""}{f.pts})</span>
+                </button>;
+              })}
+            </div>
+          </div>
+        ))}
+        {sweAdj!==0&&!isNaN(adjLine)&&(
+          <div style={{marginTop:8,padding:"8px 12px",background:"#F8F6F2",borderRadius:3,color:"#E04500",fontFamily:"Space Mono,monospace",fontSize:12}}>
+            Adjusted Line: {adjLine>=0?ABBR[form.home]+" -"+adjLine:ABBR[form.away]+" -"+Math.abs(adjLine)}
+          </div>
+        )}
+      </div>
+
+      {stars>0&&(
+        <div style={{margin:"10px 20px 0",background:"#F8F6F2",border:"1px solid "+ec+"33",borderRadius:4,padding:"12px 18px",display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
+          <Stars s={stars} lg/><span style={{color:ec,fontFamily:"Space Mono,monospace",fontSize:20,fontWeight:900}}>{stars} STAR</span>
+          <span style={{color:"#7A8E9A",fontSize:13}}>{pct}% edge</span>
+          {sweAdj!==0&&<Tag t={"SWE "+(sweAdj>0?"+":"")+sweAdj.toFixed(2)} c={sweAdj>0?"#1A6E3C":"#C0392B"}/>}
+        </div>
+      )}
+
+      <div style={{margin:"10px 20px 0",background:"#FFFFFF",border:"1px solid #1a1a1a",borderRadius:4,padding:"16px 20px"}}>
+        <div style={{color:"#7A8E9A",fontSize:10,letterSpacing:4,fontFamily:"Space Mono,monospace",marginBottom:10}}>CONTEXT FOR AI</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          {[["weather","WEATHER","Snow 25F outdoor"],["notes","SITUATION NOTES","3rd road game Mon night"],["hInj",(form.home||"HOME").slice(0,10).toUpperCase()+" INJ","QB out WR1 Q"],["aInj",(form.away||"AWAY").slice(0,10).toUpperCase()+" INJ","healthy"]].map(([k,lbl,ph])=>(
+            <div key={k}>
+              <div style={St.lbl}>{lbl}</div>
+              <input style={St.inp} placeholder={ph} value={form[k]||""} onChange={e=>set(k,e.target.value)}/>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{margin:"10px 20px 0"}}>
+        <button style={{...St.btn,opacity:(!form.home||!form.away||isNaN(spL)||isNaN(myL)||loading)?0.4:1}}
+          onClick={run} disabled={!form.home||!form.away||isNaN(spL)||isNaN(myL)||loading}>
+          {loading?<><span style={{width:12,height:12,border:"2px solid #00000044",borderTop:"2px solid #000",borderRadius:"50%",display:"inline-block",animation:"spin .8s linear infinite"}}/>ANALYZING...</>:"RUN WALTERS ANALYSIS"}
+        </button>
+      </div>
+
+      {err&&<div style={{...St.err,margin:"8px 20px 0"}}>{err}</div>}
+      {result&&<AnalysisCard r={result} onLog={()=>{alert("Already auto-logged. See Log & Stats -- Results tab grades it after the game.");}}/>}
+    </div>
+  );
+}
+
+function AnalysisCard({r,onLog}){
+  const rc=r.recommendation==="NO BET"?"#6A8A9A":r.confidence==="HIGH"?"#1A6E3C":r.confidence==="MEDIUM"?"#E04500":"#C0392B";
+  const ouPass=!r.ou_take||r.ou_take==="NO BET";
+  return(
+    <div style={{margin:"10px 20px 0",background:"#FFFFFF",border:"1px solid "+rc+"44",borderRadius:4,padding:"20px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:12,marginBottom:14}}>
+        <div>
+          <div style={{color:"#7A8E9A",fontSize:9,letterSpacing:3,marginBottom:3}}>RECOMMENDATION</div>
+          <div style={{color:rc,fontSize:22,fontWeight:900,letterSpacing:2,fontFamily:"Space Mono,monospace"}}>{r.recommendation}</div>
+          <div style={{color:"#7A8E9A",fontSize:11,marginTop:2}}>{r.game.away} @ {r.game.home}</div>
+        </div>
+        <div style={{textAlign:"right"}}>
+          <Stars s={r.game.stars} lg/>
+          <div style={{color:"#E04500",fontSize:11,marginTop:2}}>{r.game.pct}% edge</div>
+          {r.suggestedBetSize>0&&<div style={{color:rc,fontSize:18,fontWeight:700,fontFamily:"Space Mono,monospace",marginTop:4}}>${r.suggestedBetSize.toLocaleString()}</div>}
+        </div>
+      </div>
+      <div style={{borderTop:"1px solid #1a1a1a",paddingTop:12,marginBottom:12}}>
+        <p style={{color:"#3A6A85",fontSize:13,lineHeight:1.7,margin:0}}>{r.edgeAnalysis}</p>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:18,marginBottom:12}}>
+        <div>
+          <div style={{color:"#7A8E9A",fontSize:9,letterSpacing:3,fontFamily:"Space Mono,monospace",marginBottom:6}}>KEY FACTORS</div>
+          {r.keyFactors?.map((f,i)=><div key={i} style={{color:"#2A5070",fontSize:12,lineHeight:1.6,marginBottom:3}}><span style={{color:"#E04500"}}>*</span> {f}</div>)}
+        </div>
+        <div>
+          <div style={{color:"#7A8E9A",fontSize:9,letterSpacing:3,fontFamily:"Space Mono,monospace",marginBottom:6}}>LINE TIMING</div>
+          <div style={{color:"#3A6A85",fontSize:12,lineHeight:1.6,marginBottom:8}}>{r.lineAdvice}</div>
+          {r.injuryImpact&&<><div style={{color:"#7A8E9A",fontSize:9,letterSpacing:3,fontFamily:"Space Mono,monospace",marginBottom:4}}>INJURY IMPACT</div><div style={{color:"#3A6A85",fontSize:12,lineHeight:1.6}}>{r.injuryImpact}</div></>}
+        </div>
+      </div>
+      {r.ou_take&&!ouPass&&(
+        <div style={{background:"#F8F6F2",border:"1px solid #333",borderRadius:3,padding:"10px 14px",marginBottom:12}}>
+          <div style={{color:"#6A8A9A",fontSize:9,letterSpacing:2,marginBottom:4}}>TOTAL</div>
+          <div style={{color:r.ou_take==="OVER"?"#C0392B":"#1A6E3C",fontSize:14,fontWeight:700,fontFamily:"Space Mono,monospace",marginBottom:4}}>{r.ou_take}</div>
+          {r.ou_reasoning&&<div style={{color:"#3A6A85",fontSize:12,lineHeight:1.6}}>{r.ou_reasoning}</div>}
+        </div>
+      )}
+      {r.warningFlags?.length>0&&r.warningFlags[0]!=="none"&&(
+        <div style={{background:"rgba(192,57,43,0.05)",border:"1px solid #f8717133",borderRadius:3,padding:"10px 14px",marginBottom:12}}>
+          <div style={{color:"#C0392B",fontSize:10,letterSpacing:2,marginBottom:4}}>FLAGS</div>
+          {r.warningFlags.map((w,i)=><div key={i} style={{color:"#f87171aa",fontSize:12}}>- {w}</div>)}
+        </div>
+      )}
+      {r.recommendation!=="NO BET"&&<button style={{...St.btn,background:"#FFFFFF",color:"#1A6E3C",border:"1px solid #4ade8044"}} onClick={onLog}>LOG THIS BET</button>}
+    </div>
+  );
+}
+
+// -- SCHEDULE TAB --
+const OPP={"Arizona Cardinals":{home:["Los Angeles Rams","San Francisco 49ers","Seattle Seahawks","Denver Broncos","Las Vegas Raiders","Philadelphia Eagles","Washington Commanders","Los Angeles Chargers"],away:["Los Angeles Rams","San Francisco 49ers","Seattle Seahawks","Dallas Cowboys","Kansas City Chiefs","New York Giants","Atlanta Falcons","Green Bay Packers"]},"Atlanta Falcons":{home:["Carolina Panthers","New Orleans Saints","Tampa Bay Buccaneers","Baltimore Ravens","Chicago Bears","Cincinnati Bengals","Detroit Lions","Denver Broncos","Seattle Seahawks"],away:["Carolina Panthers","New Orleans Saints","Tampa Bay Buccaneers","Cleveland Browns","Green Bay Packers","Minnesota Vikings","Pittsburgh Steelers","Philadelphia Eagles"]},"Baltimore Ravens":{home:["Cincinnati Bengals","Cleveland Browns","Pittsburgh Steelers","Jacksonville Jaguars","Kansas City Chiefs","New Orleans Saints","Tampa Bay Buccaneers","Tennessee Titans"],away:["Cincinnati Bengals","Cleveland Browns","Pittsburgh Steelers","Atlanta Falcons","Carolina Panthers","Houston Texans","Indianapolis Colts","Miami Dolphins","Washington Commanders"]},"Buffalo Bills":{home:["Miami Dolphins","New England Patriots","New York Jets","Kansas City Chiefs","Los Angeles Chargers","Cincinnati Bengals","Chicago Bears","Detroit Lions"],away:["Miami Dolphins","New England Patriots","New York Jets","Denver Broncos","Las Vegas Raiders","Indianapolis Colts","Minnesota Vikings","Green Bay Packers","San Francisco 49ers"]},"Carolina Panthers":{home:["Atlanta Falcons","New Orleans Saints","Tampa Bay Buccaneers","Cleveland Browns","Green Bay Packers","Minnesota Vikings","Pittsburgh Steelers","Las Vegas Raiders","Arizona Cardinals"],away:["Atlanta Falcons","New Orleans Saints","Tampa Bay Buccaneers","Baltimore Ravens","Chicago Bears","Cincinnati Bengals","Detroit Lions","New York Giants"]},"Chicago Bears":{home:["Detroit Lions","Green Bay Packers","Minnesota Vikings","New England Patriots","New Orleans Saints","New York Jets","Tampa Bay Buccaneers","Jacksonville Jaguars","Philadelphia Eagles"],away:["Detroit Lions","Green Bay Packers","Minnesota Vikings","Buffalo Bills","Miami Dolphins","Atlanta Falcons","Carolina Panthers","Seattle Seahawks"]},"Cincinnati Bengals":{home:["Baltimore Ravens","Cleveland Browns","Pittsburgh Steelers","Atlanta Falcons","Carolina Panthers","Houston Texans","Indianapolis Colts","Miami Dolphins"],away:["Baltimore Ravens","Cleveland Browns","Pittsburgh Steelers","Jacksonville Jaguars","Kansas City Chiefs","New Orleans Saints","Tampa Bay Buccaneers","Tennessee Titans","New York Giants"]},"Cleveland Browns":{home:["Baltimore Ravens","Cincinnati Bengals","Pittsburgh Steelers","Jacksonville Jaguars","New England Patriots","Philadelphia Eagles","Washington Commanders"],away:["Baltimore Ravens","Cincinnati Bengals","Pittsburgh Steelers","Atlanta Falcons","Carolina Panthers","Dallas Cowboys","Houston Texans","Denver Broncos","New York Giants"]},"Dallas Cowboys":{home:["New York Giants","Philadelphia Eagles","Washington Commanders","Arizona Cardinals","Jacksonville Jaguars","San Francisco 49ers","Tennessee Titans","Tampa Bay Buccaneers","Baltimore Ravens"],away:["New York Giants","Philadelphia Eagles","Washington Commanders","Houston Texans","Indianapolis Colts","Los Angeles Rams","Seattle Seahawks","Green Bay Packers"]},"Denver Broncos":{home:["Kansas City Chiefs","Las Vegas Raiders","Los Angeles Chargers","Arizona Cardinals","Indianapolis Colts","New England Patriots","New York Jets","San Francisco 49ers"],away:["Kansas City Chiefs","Las Vegas Raiders","Los Angeles Chargers","Baltimore Ravens","Los Angeles Rams","Miami Dolphins","Seattle Seahawks","Tampa Bay Buccaneers"]},"Detroit Lions":{home:["Chicago Bears","Green Bay Packers","Minnesota Vikings","New England Patriots","New Orleans Saints","New York Jets","Tampa Bay Buccaneers","Tennessee Titans","New York Giants"],away:["Chicago Bears","Green Bay Packers","Minnesota Vikings","Buffalo Bills","Miami Dolphins","Atlanta Falcons","Carolina Panthers","Arizona Cardinals"]},"Green Bay Packers":{home:["Chicago Bears","Detroit Lions","Minnesota Vikings","Atlanta Falcons","Buffalo Bills","Carolina Panthers","Miami Dolphins","Houston Texans","Dallas Cowboys"],away:["Chicago Bears","Detroit Lions","Minnesota Vikings","New England Patriots","New Orleans Saints","New York Jets","Tampa Bay Buccaneers","Los Angeles Rams"]},"Houston Texans":{home:["Indianapolis Colts","Jacksonville Jaguars","Tennessee Titans","Baltimore Ravens","Cincinnati Bengals","Dallas Cowboys","Miami Dolphins","New York Jets"],away:["Indianapolis Colts","Jacksonville Jaguars","Tennessee Titans","Cleveland Browns","Kansas City Chiefs","Minnesota Vikings","Philadelphia Eagles","Pittsburgh Steelers","Washington Commanders"]},"Indianapolis Colts":{home:["Houston Texans","Jacksonville Jaguars","Tennessee Titans","Cleveland Browns","New England Patriots","Philadelphia Eagles","Pittsburgh Steelers","Washington Commanders"],away:["Houston Texans","Jacksonville Jaguars","Tennessee Titans","Baltimore Ravens","Chicago Bears","Cincinnati Bengals","Dallas Cowboys","Denver Broncos","New York Giants"]},"Jacksonville Jaguars":{home:["Houston Texans","Indianapolis Colts","Tennessee Titans","Baltimore Ravens","Buffalo Bills","Cincinnati Bengals","Dallas Cowboys","New York Giants"],away:["Houston Texans","Indianapolis Colts","Tennessee Titans","Cleveland Browns","Green Bay Packers","Los Angeles Chargers","Philadelphia Eagles","Pittsburgh Steelers","Washington Commanders"]},"Kansas City Chiefs":{home:["Denver Broncos","Las Vegas Raiders","Los Angeles Chargers","Arizona Cardinals","Houston Texans","New England Patriots","New York Jets","San Francisco 49ers"],away:["Denver Broncos","Las Vegas Raiders","Los Angeles Chargers","Baltimore Ravens","Buffalo Bills","Los Angeles Rams","Miami Dolphins","Seattle Seahawks","Tampa Bay Buccaneers"]},"Las Vegas Raiders":{home:["Denver Broncos","Kansas City Chiefs","Los Angeles Chargers","Atlanta Falcons","Carolina Panthers","New Orleans Saints","New York Giants","Tampa Bay Buccaneers"],away:["Denver Broncos","Kansas City Chiefs","Los Angeles Chargers","Arizona Cardinals","Buffalo Bills","New England Patriots","New York Jets","Pittsburgh Steelers","San Francisco 49ers"]},"Los Angeles Chargers":{home:["Denver Broncos","Kansas City Chiefs","Las Vegas Raiders","Arizona Cardinals","Cincinnati Bengals","New England Patriots","New York Jets","San Francisco 49ers"],away:["Denver Broncos","Kansas City Chiefs","Las Vegas Raiders","Baltimore Ravens","Buffalo Bills","Los Angeles Rams","Miami Dolphins","Seattle Seahawks","Tampa Bay Buccaneers"]},"Los Angeles Rams":{home:["Arizona Cardinals","San Francisco 49ers","Seattle Seahawks","Denver Broncos","Las Vegas Raiders","Philadelphia Eagles","Washington Commanders","Miami Dolphins","Minnesota Vikings"],away:["Arizona Cardinals","San Francisco 49ers","Seattle Seahawks","Dallas Cowboys","Kansas City Chiefs","Los Angeles Chargers","New York Giants","Atlanta Falcons"]},"Miami Dolphins":{home:["Buffalo Bills","New England Patriots","New York Jets","Chicago Bears","Detroit Lions","Jacksonville Jaguars","Kansas City Chiefs","Los Angeles Chargers"],away:["Buffalo Bills","New England Patriots","New York Jets","Denver Broncos","Green Bay Packers","Houston Texans","Las Vegas Raiders","Los Angeles Rams","Minnesota Vikings"]},"Minnesota Vikings":{home:["Chicago Bears","Detroit Lions","Green Bay Packers","Atlanta Falcons","Buffalo Bills","Carolina Panthers","Miami Dolphins","Indianapolis Colts"],away:["Chicago Bears","Detroit Lions","Green Bay Packers","New England Patriots","New Orleans Saints","New York Jets","Tampa Bay Buccaneers","San Francisco 49ers"]},"New England Patriots":{home:["Buffalo Bills","Miami Dolphins","New York Jets","Kansas City Chiefs","Los Angeles Chargers","Baltimore Ravens","Chicago Bears","Detroit Lions"],away:["Buffalo Bills","Miami Dolphins","New York Jets","Denver Broncos","Las Vegas Raiders","Houston Texans","Minnesota Vikings","Green Bay Packers","Los Angeles Rams"]},"New Orleans Saints":{home:["Atlanta Falcons","Carolina Panthers","Tampa Bay Buccaneers","Cleveland Browns","Green Bay Packers","Minnesota Vikings","Pittsburgh Steelers","Los Angeles Chargers","Los Angeles Rams"],away:["Atlanta Falcons","Carolina Panthers","Tampa Bay Buccaneers","Baltimore Ravens","Chicago Bears","Cincinnati Bengals","Detroit Lions","Dallas Cowboys"]},"New York Giants":{home:["Dallas Cowboys","Philadelphia Eagles","Washington Commanders","Arizona Cardinals","Jacksonville Jaguars","San Francisco 49ers","Tennessee Titans","Cleveland Browns","New Orleans Saints"],away:["Dallas Cowboys","Philadelphia Eagles","Washington Commanders","Houston Texans","Indianapolis Colts","Los Angeles Rams","Seattle Seahawks","Detroit Lions"]},"New York Jets":{home:["Buffalo Bills","Miami Dolphins","New England Patriots","Arizona Cardinals","Chicago Bears","Detroit Lions","Kansas City Chiefs","Los Angeles Chargers","Tennessee Titans"],away:["Buffalo Bills","Miami Dolphins","New England Patriots","Denver Broncos","Las Vegas Raiders","Jacksonville Jaguars","Green Bay Packers","Minnesota Vikings","Seattle Seahawks"]},"Philadelphia Eagles":{home:["Dallas Cowboys","New York Giants","Washington Commanders","Atlanta Falcons","Carolina Panthers","New Orleans Saints","Tampa Bay Buccaneers","Cleveland Browns","Seattle Seahawks"],away:["Dallas Cowboys","New York Giants","Washington Commanders","Baltimore Ravens","Chicago Bears","Cincinnati Bengals","Detroit Lions","Los Angeles Rams"]},"Pittsburgh Steelers":{home:["Baltimore Ravens","Cincinnati Bengals","Cleveland Browns","Indianapolis Colts","Jacksonville Jaguars","Tennessee Titans","Dallas Cowboys","New York Giants"],away:["Baltimore Ravens","Cincinnati Bengals","Cleveland Browns","Green Bay Packers","Kansas City Chiefs","Los Angeles Chargers","Philadelphia Eagles","Washington Commanders"]},"San Francisco 49ers":{home:["Arizona Cardinals","Los Angeles Rams","Seattle Seahawks","Dallas Cowboys","Kansas City Chiefs","Los Angeles Chargers","New York Giants","Buffalo Bills","Green Bay Packers"],away:["Arizona Cardinals","Los Angeles Rams","Seattle Seahawks","Denver Broncos","Las Vegas Raiders","Philadelphia Eagles","Washington Commanders","Tampa Bay Buccaneers"]},"Seattle Seahawks":{home:["Arizona Cardinals","Los Angeles Rams","San Francisco 49ers","Denver Broncos","Las Vegas Raiders","Philadelphia Eagles","Washington Commanders","New York Jets","Detroit Lions"],away:["Arizona Cardinals","Los Angeles Rams","San Francisco 49ers","Kansas City Chiefs","Los Angeles Chargers","Dallas Cowboys","New York Giants","New Orleans Saints"]},"Tampa Bay Buccaneers":{home:["Atlanta Falcons","Carolina Panthers","New Orleans Saints","Cleveland Browns","Green Bay Packers","Minnesota Vikings","Pittsburgh Steelers","Los Angeles Rams","Dallas Cowboys"],away:["Atlanta Falcons","Carolina Panthers","New Orleans Saints","Baltimore Ravens","Chicago Bears","Cincinnati Bengals","Detroit Lions","Kansas City Chiefs"]},"Tennessee Titans":{home:["Houston Texans","Indianapolis Colts","Jacksonville Jaguars","Baltimore Ravens","Cincinnati Bengals","Dallas Cowboys","Miami Dolphins","New York Jets"],away:["Houston Texans","Indianapolis Colts","Jacksonville Jaguars","Cleveland Browns","Kansas City Chiefs","Minnesota Vikings","Philadelphia Eagles","Pittsburgh Steelers","Washington Commanders"]},"Washington Commanders":{home:["Dallas Cowboys","New York Giants","Philadelphia Eagles","Atlanta Falcons","Carolina Panthers","New Orleans Saints","Tampa Bay Buccaneers","Pittsburgh Steelers"],away:["Dallas Cowboys","New York Giants","Philadelphia Eagles","Baltimore Ravens","Buffalo Bills","Cincinnati Bengals","Detroit Lions","Chicago Bears"]}};
+
+const SEASON_START_2026=new Date("2026-09-08T00:00:00");
+function currentNflWeek(){
+  const w=Math.floor((Date.now()-SEASON_START_2026.getTime())/(7*24*3600*1000))+1;
+  return Math.min(18,Math.max(1,w));
+}
+function ScheduleTab({ratings,calib}){
+  const hfa=hfaOf(calib);
+  const[sel,setSel]=useState("");const[v,setV]=useState("week");const opps=OPP[sel];
+  const[wk,setWk]=useState(currentNflWeek());
+  const[wkGames,setWkGames]=useState(()=>{try{return JSON.parse(localStorage.getItem("wsched26_"+currentNflWeek()))||null;}catch{return null;}});
+  const[wkLoading,setWkLoading]=useState(false);
+  const[wkErr,setWkErr]=useState(null);
+  const[wkDropped,setWkDropped]=useState([]);
+  const pickWeek=n=>{
+    setWk(n);setWkErr(null);
+    try{setWkGames(JSON.parse(localStorage.getItem("wsched26_"+n))||null);}catch{setWkGames(null);}
+  };
+  const fetchWeek=async()=>{
+    if(wkLoading)return;setWkLoading(true);setWkErr(null);
+    try{
+      const r=await fetchScheduleAPI(wk);
+      if(!r.games.length)throw new Error("No games matched for week "+wk);
+      setWkGames(r.games);setWkDropped(r.dropped);
+      try{localStorage.setItem("wsched26_"+wk,JSON.stringify(r.games));}catch{}
+    }catch(e2){setWkErr(e2.message);}finally{setWkLoading(false);}
+  };
+  return(
+    <div style={{paddingBottom:40}}>
+      <div style={{margin:"16px 20px 0",background:"#F8F6F2",border:"1px solid #1f2937",borderRadius:4,padding:"14px 18px",display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8,alignItems:"center"}}>
+        <div><div style={{color:"#E04500",fontSize:10,letterSpacing:3,fontFamily:"Space Mono,monospace"}}>2026 NFL SCHEDULE</div><div style={{color:"#7A8E9A",fontSize:12,marginTop:4}}>Live week-by-week -- fetched and cached on demand</div></div>
+        <div style={{display:"flex",gap:6}}>{[["week","BY WEEK"],["team","BY TEAM"]].map(([id,l])=><button key={id} onClick={()=>setV(id)} style={{...St.sm,...(v===id?{color:"#E04500",borderColor:"#E04500",background:"#D4AF3311"}:{})}}>{l}</button>)}</div>
+      </div>
+
+      {v==="week"&&(
+        <div style={{margin:"12px 20px 0"}}>
+          <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:10}}>
+            {Array.from({length:18},(_,i)=>i+1).map(n=>(
+              <button key={n} onClick={()=>pickWeek(n)} style={{...St.sm,padding:"5px 9px",fontSize:10,color:wk===n?"#E04500":"#7A8E9A",borderColor:wk===n?"#E04500":"#DDD8CF",background:wk===n?"#D4AF3311":"transparent"}}>{n}</button>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:10,flexWrap:"wrap"}}>
+            <button style={{...St.sm,color:"#E04500",borderColor:"#E0450030",background:"#FB4F1411",padding:"9px 16px"}} onClick={fetchWeek} disabled={wkLoading}>{wkLoading?"SEARCHING...":wkGames?"REFRESH WEEK "+wk:"FETCH WEEK "+wk}</button>
+            {wkGames&&<span style={{color:"#7A8E9A",fontSize:11}}>{wkGames.length} games cached</span>}
+          </div>
+          {wkErr&&<div style={{...St.err,marginBottom:8}}>{wkErr}</div>}
+          {wkDropped.length>0&&<div style={{color:"#C0392B",fontSize:10,marginBottom:8,fontFamily:"Space Mono,monospace"}}>DROPPED {wkDropped.length} (unrecognized): {wkDropped.join(", ")}</div>}
+          {wkGames&&wkGames.map((g,i)=>{
+            const hr2=ratings[g.home],ar2=ratings[g.away];
+            const line=hr2!=null&&ar2!=null?parseFloat(((hr2+hfa)-ar2).toFixed(1)):null;
+            return(
+              <div key={i} style={{background:"#FFFFFF",border:"1px solid #DDD8CF",borderRadius:4,padding:"13px 16px",marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
+                <div>
+                  <div style={{display:"flex",gap:8,marginBottom:5,flexWrap:"wrap",alignItems:"center"}}>
+                    <Tag t={g.day}/><span style={{color:"#6A8A9A",fontSize:11}}>{g.time}</span>{g.net&&<Tag t={g.net} c="#7ABAE5"/>}
+                  </div>
+                  <div style={{color:"#1A3A5C",fontSize:14,fontWeight:600}}>{g.away} <span style={{color:"#7A8E9A"}}>@</span> {g.home}</div>
+                </div>
+                {line!=null&&<div style={{background:"#F8F6F2",border:"1px solid #1a1a1a",borderRadius:3,padding:"8px 12px",textAlign:"right"}}><div style={{color:"#7A8E9A",fontSize:9,letterSpacing:2}}>WALTERS LINE</div><div style={{color:line>0?"#1A6E3C":"#C0392B",fontSize:15,fontWeight:900,fontFamily:"Space Mono,monospace"}}>{line>0?ABBR[g.home]+" -"+line:ABBR[g.away]+" -"+Math.abs(line)}</div></div>}
+              </div>
+            );
+          })}
+          {!wkGames&&!wkLoading&&(
+            <div style={{textAlign:"center",padding:"40px 20px",color:"#C8C0B0",fontSize:13}}>Hit FETCH to pull the Week {wk} slate with your Walters line on every game</div>
+          )}
+        </div>
+      )}
+
+      {v==="team"&&(
+        <div style={{margin:"12px 20px 0"}}>
+          <div style={{marginBottom:10}}>
+            <div style={St.lbl}>SELECT TEAM</div>
+            <select style={{...St.sel,marginTop:4}} value={sel} onChange={e=>setSel(e.target.value)}>
+              <option value="">Choose...</option>
+              {Object.keys(OPP).sort().map(t=><option key={t} value={t}>{t} ({ratings[t]>=0?"+":""}{ratings[t]})</option>)}
+            </select>
+          </div>
+          {sel&&opps&&(()=>{
+            const all=[...opps.home,...opps.away];
+            const ao=all.reduce((a,t)=>a+(ratings[t]||0),0)/all.length;
+            const tough=all.filter(t=>(ratings[t]||0)>2).length,soft=all.filter(t=>(ratings[t]||0)<-2).length;
+            return <>
+              <div style={{background:"#FFFFFF",border:"1px solid "+CLR[sel]+"44",borderRadius:4,padding:"14px 18px",marginBottom:10,display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+                <div style={{borderLeft:"3px solid "+(CLR[sel]||"#E04500"),paddingLeft:12}}>
+                  <div style={{color:"#7ABAE5",fontSize:10,letterSpacing:3}}>2026 SCHEDULE</div>
+                  <div style={{color:"#fff",fontSize:17,fontWeight:900}}>{sel}</div>
+                  <div style={{color:"#E04500",fontFamily:"Space Mono,monospace",fontSize:12,marginTop:2}}>Rating: {ratings[sel]>=0?"+":""}{ratings[sel]}</div>
+                </div>
+                <div style={{display:"flex",gap:16}}>
+                  {[["AVG OPP",ao.toFixed(2),ao>0.5?"#C0392B":"#1A6E3C"],["TOUGH",tough,"#C0392B"],["SOFT",soft,"#1A6E3C"]].map(([l,val,c])=>(
+                    <div key={l} style={{textAlign:"center"}}><div style={{color:"#7A8E9A",fontSize:10}}>{l}</div><div style={{color:c,fontFamily:"Space Mono,monospace",fontSize:15,fontWeight:700}}>{val}</div></div>
+                  ))}
+                </div>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                {[["HOME",opps.home,true],["AWAY",opps.away,false]].map(([lbl,list,ih])=>(
+                  <div key={lbl} style={{background:"#FFFFFF",border:"1px solid #1a1a1a",borderRadius:4,overflow:"hidden"}}>
+                    <div style={{background:"#F8F6F2",padding:"8px 14px",color:"#7A8E9A",fontSize:9,letterSpacing:3,fontFamily:"Space Mono,monospace"}}>{lbl} GAMES</div>
+                    {list.map((opp,i)=>{
+                      const or=ratings[opp]||0,sr=ratings[sel]||0;
+                      const myL2=ih?(sr+HOME_ADV)-or:(sr-or-HOME_ADV);
+                      const fav=myL2>1.5,dog=myL2<-1.5;
+                      return <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 12px",borderBottom:"1px solid #0d0d0d",background:fav?"#4ade8006":dog?"#f871710a":"transparent"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:6}}>
+                          <span style={{background:CLR[opp]||"#C8C0B0",color:"#fff",fontSize:9,padding:"1px 5px",borderRadius:2,fontFamily:"Space Mono,monospace",fontWeight:700,minWidth:26,textAlign:"center"}}>{ABBR[opp]||"?"}</span>
+                          <span style={{color:"#1A3A5C",fontSize:12}}>{opp}</span>
+                        </div>
+                        <div style={{textAlign:"right"}}>
+                          <div style={{color:"#7A8E9A",fontSize:10,fontFamily:"Space Mono,monospace"}}>{or>=0?"+":""}{or}</div>
+                          <div style={{color:fav?"#1A6E3C":dog?"#C0392B":"#6A8A9A",fontSize:10,fontFamily:"Space Mono,monospace",fontWeight:700}}>{fav?"fav "+myL2.toFixed(1):dog?"dog "+Math.abs(myL2).toFixed(1):"~even"}</div>
+                        </div>
+                      </div>;
+                    })}
+                  </div>
+                ))}
+              </div>
+            </>;
+          })()}
+          {!sel&&<div style={{color:"#DDD8CF",textAlign:"center",padding:"40px",fontSize:13}}>Select a team to view their 2026 matchups</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// -- RATINGS TAB --
+function RatingsTab({ratings,setRatings}){
+  const[home,setHome]=useState("");const[away,setAway]=useState("");
+  const[hs,setHs]=useState("");const[as2,setAs]=useState("");
+  const[hi,setHi]=useState(0);const[ai,setAi]=useState(0);
+  const[log,setLog]=useState([]);
+  const update=()=>{
+    const hS=parseInt(hs),aS=parseInt(as2);
+    if(!home||!away||isNaN(hS)||isNaN(aS))return;
+    const hR=ratings[home]||0,aR=ratings[away]||0;
+    const net=hS-aS;
+    const hT=net+aR+(hi-ai)-HOME_ADV,aT=-net+hR+(ai-hi)+HOME_ADV;
+    const nH=parseFloat((0.9*hR+0.1*hT).toFixed(2)),nA=parseFloat((0.9*aR+0.1*aT).toFixed(2));
+    setRatings(r=>({...r,[home]:nH,[away]:nA}));
+    setLog(l=>[{home,away,hS,aS,hR,aR,nH,nA},...l.slice(0,19)]);
+    setHs("");setAs("");setHi(0);setAi(0);
+  };
+  const sorted=Object.entries(ratings).sort((a,b)=>b[1]-a[1]);
+  const openingOf=t=>{const o=OPENING_2026.find(x=>x.t===t);return parseFloat(((DEFAULT_RATINGS[t]||0)*OPENING_SHRINK+(o?o.d:0)).toFixed(2));};
+  const applyOpening=()=>{
+    const next={};
+    Object.keys(DEFAULT_RATINGS).forEach(t=>{next[t]=openingOf(t);});
+    setRatings(next);
+  };
+  const openingApplied=Object.keys(DEFAULT_RATINGS).every(t=>Math.abs((ratings[t]||0)-openingOf(t))<0.001);
+  return(
+    <div style={{paddingBottom:40}}>
+      <H2>2026 SEASON OPENING RATINGS</H2>
+      <div style={{margin:"10px 20px 0",background:"#FFFFFF",border:"1px solid "+(openingApplied?"#1A6E3C44":"#E0450044"),borderRadius:4,padding:"16px 18px"}}>
+        <div style={{color:"#7ABAE5",fontSize:12,lineHeight:1.6,marginBottom:10}}>
+          End-2025 baseline x {OPENING_SHRINK} (11-season test: full carryover opens worse than a flat start; ratings need market-like dispersion), plus net offseason personnel value per the book.
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:4,marginBottom:12}}>
+          {OPENING_2026.map(o=>(
+            <div key={o.t} style={{display:"flex",justifyContent:"space-between",gap:10,fontSize:11,padding:"4px 0",borderBottom:"1px solid #F2EEE6",flexWrap:"wrap"}}>
+              <span style={{color:"#1A3A5C"}}><span style={{fontFamily:"Space Mono,monospace",fontWeight:700,color:CLR[o.t]||"#5A7A90"}}>{ABBR[o.t]}</span> {o.why}</span>
+              <span style={{fontFamily:"Space Mono,monospace",fontWeight:700,color:o.d>0?"#1A6E3C":"#C0392B"}}>{o.d>0?"+":""}{o.d}</span>
+            </div>
+          ))}
+        </div>
+        {openingApplied
+          ?<div style={{color:"#1A6E3C",fontFamily:"Space Mono,monospace",fontSize:11,fontWeight:700}}>2026 OPENING RATINGS ACTIVE</div>
+          :<button style={{...St.btn,padding:"11px"}} onClick={applyOpening}>APPLY 2026 OPENING RATINGS</button>}
+      </div>
+
+      <H2>BOTTOM-UP RATINGS -- FROM PLAYER DATA</H2>
+      <div style={{margin:"10px 20px 0",background:"#FFFFFF",border:"1px solid #DDD8CF",borderRadius:4,padding:"16px 18px"}}>
+        <div style={{color:"#7ABAE5",fontSize:12,lineHeight:1.6,marginBottom:10}}>
+          Team rating built only from imported player data: starting QB index (3.48 pts/SD), pass-rush unit (41.9 pts/unit), protection unit (-22.6 pts/unit), rescaled to market-like dispersion. 2022-25 test: RMSE 13.2 vs top-down 12.7 vs market 12.2 -- worse as a base, offered so CLV and the info coefficient can judge it on your data.
+        </div>
+        {(()=>{const pd=loadPlayerData();const bu=pd?buildBottomUp(pd):null;
+          if(!bu)return <div style={{fontFamily:"Space Mono,monospace",fontSize:10,color:"#C8C0B0"}}>Import player data in the Analyze tab first (player_pipeline.py output)</div>;
+          const applied=Object.keys(bu).every(t=>Math.abs((ratings[t]||0)-bu[t])<0.001);
+          return applied?<div style={{color:"#1A6E3C",fontFamily:"Space Mono,monospace",fontSize:11,fontWeight:700}}>BOTTOM-UP RATINGS ACTIVE ({pd.source} thru wk {pd.through_week})</div>
+            :<button style={{...St.btn,padding:"11px"}} onClick={()=>setRatings(bu)}>APPLY BOTTOM-UP RATINGS ({pd.source} thru wk {pd.through_week})</button>;})()}
+      </div>
+
+      <H2>WEEKLY POWER RATING UPDATER</H2>
+      <div style={{margin:"10px 20px 0",background:"#FFFFFF",border:"1px solid #FB4F1422",borderRadius:4,padding:"18px"}}>
+        <div style={{color:"#7ABAE5",fontSize:12,lineHeight:1.6,marginBottom:14}}>
+          Enter results each week. Formula: <span style={{color:"#E04500",fontFamily:"Space Mono,monospace",fontSize:11}}>New = (0.9 x Old) + (0.1 x TGPL)</span> where TGPL = net score + opp rating + injury diff - HFA
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          {[["AWAY TEAM",away,setAway],["HOME TEAM",home,setHome]].map(([lbl,val,fn])=>(
+            <div key={lbl}>
+              <div style={St.lbl}>{lbl}</div>
+              <select style={St.sel} value={val} onChange={e=>fn(e.target.value)}>
+                <option value="">Select...</option>
+                {sorted.map(([t,r])=><option key={t} value={t}>{t} ({r>=0?"+":""}{r})</option>)}
+              </select>
+            </div>
+          ))}
+          {[["AWAY SCORE",as2,setAs],["HOME SCORE",hs,setHs]].map(([lbl,val,fn])=>(
+            <div key={lbl}>
+              <div style={St.lbl}>{lbl}</div>
+              <input style={St.inp} type="number" value={val} onChange={e=>fn(e.target.value)} placeholder="Score"/>
+            </div>
+          ))}
+          {[["AWAY INJ LEVEL",ai,setAi],["HOME INJ LEVEL",hi,setHi]].map(([lbl,val,fn])=>(
+            <div key={lbl}>
+              <div style={St.lbl}>{lbl} <span style={{color:"#E04500",fontFamily:"Space Mono,monospace"}}>{val}</span></div>
+              <input type="range" min="0" max="8" step="0.5" value={val} onChange={e=>fn(+e.target.value)} style={{width:"100%",accentColor:"#E04500",marginTop:4}}/>
+              <div style={{display:"flex",justifyContent:"space-between",color:"#C8C0B0",fontSize:10,fontFamily:"Space Mono,monospace"}}><span>0 healthy</span><span>8 decimated</span></div>
+            </div>
+          ))}
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <button style={St.btn} onClick={update}>UPDATE RATINGS</button>
+          <button style={{...St.sm,color:"#C0392B",borderColor:"#C0392B44"}} onClick={()=>setRatings({...DEFAULT_RATINGS})}>RESET</button>
+        </div>
+      </div>
+
+      {log.length>0&&(
+        <><H2>RECENT UPDATES</H2>
+        <div style={{margin:"8px 20px 0",display:"flex",flexDirection:"column",gap:6}}>
+          {log.map((h,i)=>(
+            <div key={i} style={{background:"#F8F6F2",border:"1px solid #1a1a1a",borderRadius:3,padding:"10px 14px",display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8,fontSize:12}}>
+              <span style={{color:"#5A7A90"}}>{h.away} {h.aS} @ {h.home} {h.hS}</span>
+              <div style={{display:"flex",gap:14,fontFamily:"Space Mono,monospace",fontSize:11}}>
+                <span style={{color:"#6A8A9A"}}>{ABBR[h.home]||h.home}: <span style={{color:h.nH>h.hR?"#1A6E3C":"#C0392B"}}>{h.hR>=0?"+":""}{h.hR} to {h.nH>=0?"+":""}{h.nH}</span></span>
+                <span style={{color:"#6A8A9A"}}>{ABBR[h.away]||h.away}: <span style={{color:h.nA>h.aR?"#1A6E3C":"#C0392B"}}>{h.aR>=0?"+":""}{h.aR} to {h.nA>=0?"+":""}{h.nA}</span></span>
+              </div>
+            </div>
+          ))}
+        </div></>
+      )}
+
+      <H2>ALL 32 RATINGS (LIVE)</H2>
+      <div style={{margin:"8px 20px 0",display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(230px,1fr))",gap:5}}>
+        {sorted.map(([t,r])=>{
+          const d=parseFloat((r-(DEFAULT_RATINGS[t]||0)).toFixed(2));
+          return <div key={t} style={{background:"#F8F6F2",border:"1px solid #1a1a1a",borderRadius:3,padding:"7px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{display:"flex",alignItems:"center",gap:7}}>
+              <span style={{background:CLR[t]||"#C8C0B0",color:"#fff",fontSize:9,padding:"1px 5px",borderRadius:2,fontFamily:"Space Mono,monospace",fontWeight:700,minWidth:26,textAlign:"center"}}>{ABBR[t]||"?"}</span>
+              <span style={{color:"#1A3A5C",fontSize:12}}>{t}</span>
+            </div>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <span style={{color:"#E04500",fontFamily:"Space Mono,monospace",fontSize:13,fontWeight:700}}>{r>=0?"+":""}{r}</span>
+              {d!==0&&<span style={{color:d>0?"#1A6E3C":"#C0392B",fontSize:10,fontFamily:"Space Mono,monospace"}}>{d>0?"+":""}{d}</span>}
+            </div>
+          </div>;
+        })}
+      </div>
+    </div>
+  );
+}
+
+// -- RESULTS TAB (auto-grade + formula accuracy + rating updates) --
+const RESULTS_INTERVAL_MS=6*3600*1000;
+function gradeSide(margin,spread,side){
+  // margin = home score - away score; spread = home favored by (home-margin space); side = "home"|"away"
+  if(margin===spread)return "P";
+  const homeCovers=margin>spread;
+  return (side==="home")===homeCovers?"W":"L";
+}
+function betSideOf(rec){
+  if(!rec)return null;
+  const r=rec.toUpperCase();
+  if(r.includes("NO BET"))return null;
+  if(r.includes("TAKE HOME")||r.includes("FADE AWAY"))return "home";
+  if(r.includes("TAKE AWAY")||r.includes("FADE HOME"))return "away";
+  return null;
+}
+function gradeEntry(b,hs,as){
+  const margin=hs-as,total=hs+as;
+  const f={hs,as};
+  const side=betSideOf(b.result?.recommendation);
+  if(side){
+    f.outcome=gradeSide(margin,parseFloat(b.game?.spread),side);
+    const sz=b.betSize||0;
+    f.pnl=f.outcome==="W"?sz:f.outcome==="L"?-Math.round(sz*1.1):0;
+  }
+  if(b.mech&&b.mech.side)f.mechOutcome=gradeSide(margin,parseFloat(b.game?.spread),b.mech.side);
+  if(b.close!=null){
+    f.clv=clvOf(side,parseFloat(b.game?.spread),b.close);
+    f.clvMech=clvOf(b.mech&&b.mech.side,parseFloat(b.game?.spread),b.close);
+    f.clvOu=clvOuOf(b.ouRec,parseFloat(b.game?.ou),b.closeOu);
+  }
+  const ou=(b.ouRec||"").toUpperCase();
+  const line=parseFloat(b.game?.ou);
+  if((ou==="OVER"||ou==="UNDER")&&!isNaN(line)){
+    f.ouOutcome=total===line?"P":(total>line)===(ou==="OVER")?"W":"L";
+    const sz=b.betSize||0;
+    if(isBet(b)){f.ouPnl=f.ouOutcome==="W"?sz:f.ouOutcome==="L"?-Math.round(sz*1.1):0;}
+  }
+  return f;
+}
+function tgpl(hR,aR,hs,as,hi,ai,hfa){
+  const net=hs-as;
+  const hT=net+aR+(hi-ai)-hfa;
+  const aT=-net+hR+(ai-hi)+hfa;
+  return{nH:parseFloat((0.9*hR+0.1*hT).toFixed(2)),nA:parseFloat((0.9*aR+0.1*aT).toFixed(2))};
+}
+function ratingSuggestion(b,ratings,hfa){
+  if(b.hs==null||b.as==null)return null;
+  const hR=ratings[b.game?.home],aR=ratings[b.game?.away];
+  if(hR==null||aR==null)return null;
+  const net=b.hs-b.as;
+  const hi=b.game?.hInjPts||0,ai=b.game?.aInjPts||0;
+  const H=hfa!=null?hfa:HOME_ADV;
+  const hT=net+aR+(hi-ai)-H;
+  const aT=-net+hR+(ai-hi)+H;
+  return{
+    home:b.game.home,away:b.game.away,hR,aR,
+    nH:parseFloat((0.9*hR+0.1*hT).toFixed(2)),
+    nA:parseFloat((0.9*aR+0.1*aT).toFixed(2)),
+  };
+}
+
+function gradeSlate(schedGames,finals,ratingsBefore,hfa,linesMap,history){
+  const games=[];const next={...ratingsBefore};
+  schedGames.forEach(s=>{
+    const f=finals.find(x=>x.home===s.home&&x.away===s.away);
+    if(!f)return;
+    const hR=ratingsBefore[s.home],aR=ratingsBefore[s.away];
+    if(hR==null||aR==null)return;
+    const modelLine=parseFloat(((hR+hfa)-aR).toFixed(2));
+    const ln=linesMap[s.home+"|"+s.away]||null;
+    const close=ln&&ln.posted!=null?ln.posted:null;
+    const open=ln&&ln.open!=null?ln.open:close;
+    let stars=0,mechSide=null,mechOutcome=null;
+    if(close!=null){
+      const st=calcStars(modelLine,close);stars=parseFloat(st.stars);
+      if(stars>=0.5){mechSide=modelLine>close?"home":modelLine<close?"away":null;if(mechSide)mechOutcome=gradeSide(f.hs-f.as,close,mechSide);}
+    }
+    const logged=history.find(b=>b.game&&b.game.home===s.home&&b.game.away===s.away);
+    const hi=logged&&logged.game.hInjPts||0,ai=logged&&logged.game.aInjPts||0;
+    const u=tgpl(hR,aR,f.hs,f.as,hi,ai,hfa);
+    next[s.home]=u.nH;next[s.away]=u.nA;
+    games.push({home:s.home,away:s.away,hs:f.hs,as:f.as,modelLine,close,open,ou:ln?ln.ou:null,stars,mechSide,mechOutcome,mechClv:clvOf(mechSide,open,close),neutral:false,hR,aR,nH:u.nH,nA:u.nA});
+  });
+  return{games,next};
+}
+
+function ScoreEntry({b,onSave}){
+  const[a,setA]=useState("");const[h,setH]=useState("");
+  const ok=a!==""&&h!==""&&!isNaN(parseInt(a))&&!isNaN(parseInt(h));
+  return(
+    <div style={{display:"flex",gap:4,alignItems:"center"}}>
+      <input style={{...St.inp,width:48,padding:"4px 6px",fontSize:11,fontFamily:"Space Mono,monospace"}} placeholder={ABBR[b.game.away]} value={a} onChange={e=>setA(e.target.value)}/>
+      <input style={{...St.inp,width:48,padding:"4px 6px",fontSize:11,fontFamily:"Space Mono,monospace"}} placeholder={ABBR[b.game.home]} value={h} onChange={e=>setH(e.target.value)}/>
+      <button style={{...St.sm,fontSize:9,padding:"4px 8px",color:ok?"#1A6E3C":"#C8C0B0",borderColor:ok?"#1A6E3C66":"#DDD8CF"}} disabled={!ok} onClick={()=>onSave(parseInt(h),parseInt(a))}>SAVE</button>
+    </div>
+  );
+}
+
+function AccCard({lbl,w,l,p}){
+  const n=w+l;const pct=n?(w/n*100):null;const ci=wilson(w,n);
+  return(
+    <div style={{background:"#FFFFFF",border:"1px solid #1a1a1a",borderRadius:4,padding:"12px 14px"}}>
+      <div style={{color:"#C8C0B0",fontSize:9,letterSpacing:2,fontFamily:"Space Mono,monospace"}}>{lbl}</div>
+      <div style={{display:"flex",gap:10,alignItems:"baseline",marginTop:4,flexWrap:"wrap"}}>
+        <span style={{fontFamily:"Space Mono,monospace",fontSize:17,fontWeight:700,color:"#0A1F35"}}>{w}-{l}{p?"-"+p:""}</span>
+        {pct!=null&&<span style={{fontFamily:"Space Mono,monospace",fontSize:13,fontWeight:700,color:pct>52.38?"#1A6E3C":"#C0392B"}}>{pct.toFixed(1)}%</span>}
+        {ci&&<span style={{fontFamily:"Space Mono,monospace",fontSize:9,color:"#7A8E9A"}}>95% CI {ci[0].toFixed(0)}-{ci[1].toFixed(0)}%</span>}
+      </div>
+      {pct!=null&&<div style={{background:"#F8F6F2",borderRadius:4,height:6,overflow:"hidden",position:"relative",marginTop:8}}>
+        <div style={{position:"absolute",left:"52.38%",top:0,bottom:0,width:2,background:"#E04500",zIndex:2}}/>
+        {ci&&<div style={{position:"absolute",left:ci[0]+"%",width:(ci[1]-ci[0])+"%",top:0,bottom:0,background:"#0A1F3514"}}/>}
+        <div style={{height:"100%",width:Math.min(pct,100)+"%",background:pct>52.38?"#1A6E3C":"#C0392B"}}/>
+      </div>}
+      {n>0&&n<50&&<div style={{fontFamily:"Space Mono,monospace",fontSize:9,color:"#C8C0B0",marginTop:4}}>n={n} -- interval too wide to conclude</div>}
+    </div>
+  );
+}
+
+function ResultsTab({history,onCommit,ratings,setRatings,calib,setCalib,slates,setSlates}){
+  const hfa=hfaOf(calib);
+  const[fetching,setFetching]=useState(false);
+  const[err,setErr]=useState(null);
+  const[last,setLast]=useState(()=>parseInt(localStorage.getItem("wnfl_results_last")||"0"));
+  const[slateWk,setSlateWk]=useState(Math.max(1,currentNflWeek()-1));
+  const[slateBusy,setSlateBusy]=useState(false);
+  const[slateMsg,setSlateMsg]=useState(null);
+
+  const graded=history.filter(b=>b.hs!=null);
+  const pending=history.filter(b=>b.hs==null&&b.game&&b.game.home&&b.game.away&&!isNaN(parseFloat(b.game.spread)));
+
+  const fetchScores=useCallback(async()=>{
+    if(fetching||!pending.length)return;
+    setFetching(true);setErr(null);
+    try{
+      const r=await fetchFinalsAPI(pending.map(b=>({home:b.game.home,away:b.game.away})));
+      const commits=[];
+      pending.forEach(b=>{
+        const s=r.finals.find(x=>x.home===b.game.home&&x.away===b.game.away);
+        if(s)commits.push({ts:b.ts,fields:gradeEntry(b,s.hs,s.as)});
+      });
+      if(commits.length)onCommit(commits);
+      const now=Date.now();setLast(now);
+      try{localStorage.setItem("wnfl_results_last",String(now));}catch{}
+      if(!commits.length)setErr("No finals yet"+(r.dropped.length?" -- unrecognized names: "+r.dropped.join(", "):" -- games upcoming or in progress"));
+    }catch(e){setErr(e.message);}finally{setFetching(false);}
+  },[fetching,pending,onCommit]);
+
+  useEffect(()=>{
+    if(pending.length&&Date.now()-last>RESULTS_INTERVAL_MS)fetchScores();
+  },[]);
+
+  const manualScore=b=>(hs,as)=>{onCommit([{ts:b.ts,fields:gradeEntry(b,hs,as)}]);};
+
+  // -- closing line capture: fetch current lines for pending games, store as close (latest sighting wins) --
+  const[closing,setClosing]=useState(false);
+  const captureClosers=async()=>{
+    if(closing||!pending.length)return;setClosing(true);setErr(null);
+    try{
+      const r=await fetchRawLines();
+      persistLines(r.lines);
+      const commits=[];
+      pending.forEach(b=>{
+        const ln=r.lines.find(x=>x.home===b.game.home&&x.away===b.game.away);
+        if(ln)commits.push({ts:b.ts,fields:{close:ln.posted,closeOu:ln.ou,closeTs:Date.now()}});
+      });
+      if(commits.length)onCommit(commits);
+      setSlateMsg("Closing lines captured for "+commits.length+" of "+pending.length+" pending games"+(r.dropped.length?" -- dropped: "+r.dropped.join(", "):""));
+    }catch(e){setErr("Closers: "+e.message);}finally{setClosing(false);}
+  };
+  // CLV pools: bets (AI side) and model picks; positive = beat the closer
+  const clvBets=history.filter(b=>isBet(b)&&b.clv!=null);
+  const clvMech=history.filter(b=>b.clvMech!=null);
+  const clvOu=history.filter(b=>b.clvOu!=null);
+  const clvStat=arr=>{if(!arr.length)return null;const v=arr.map(x=>x);const m=v.reduce((a,x)=>a+x,0)/v.length;const pos=v.filter(x=>x>0).length,neg=v.filter(x=>x<0).length;const sd=Math.sqrt(v.reduce((a,x)=>a+(x-m)*(x-m),0)/Math.max(1,v.length-1));return{m:parseFloat(m.toFixed(2)),n:v.length,pos,neg,se:parseFloat((sd/Math.sqrt(v.length)).toFixed(2))};};
+  const cB=clvStat(clvBets.map(b=>b.clv)),cM=clvStat(clvMech.map(b=>b.clvMech)),cO=clvStat(clvOu.map(b=>b.clvOu));
+
+  // -- weekly slate grading: every game, all 32 ratings --
+  const slateFor=wk=>(slates||[]).find(s=>s.wk===wk);
+  const latestGraded=(slates||[]).reduce((m,s)=>Math.max(m,s.wk),0);
+  const gradeWeek=async()=>{
+    if(slateBusy)return;setSlateBusy(true);setSlateMsg(null);setErr(null);
+    try{
+      const existing=slateFor(slateWk);
+      if(existing&&slateWk<latestGraded)throw new Error("Week "+slateWk+" already graded and later weeks exist -- only the latest week can be re-graded");
+      let sched=null;
+      try{sched=JSON.parse(localStorage.getItem("wsched26_"+slateWk));}catch{}
+      let dropped=[];
+      if(!sched||!sched.length){const r=await fetchScheduleAPI(slateWk);sched=r.games;dropped=r.dropped;try{localStorage.setItem("wsched26_"+slateWk,JSON.stringify(sched));}catch{}}
+      if(!sched.length)throw new Error("No schedule for week "+slateWk);
+      const fr=await fetchFinalsAPI(sched.map(g=>({home:g.home,away:g.away})));
+      dropped=dropped.concat(fr.dropped);
+      if(!fr.finals.length)throw new Error("No finals found for week "+slateWk);
+      let linesMap={};try{linesMap=JSON.parse(localStorage.getItem("wlines26_"+slateWk)||"{}");}catch{}
+      const ratingsBefore=existing?existing.ratingsBefore:{...ratings};
+      const{games,next}=gradeSlate(sched,fr.finals,ratingsBefore,hfa,linesMap,history);
+      const rec={wk:slateWk,ts:Date.now(),ratingsBefore,games,dropped,nSched:sched.length};
+      setSlates(ss=>[...(ss||[]).filter(x=>x.wk!==slateWk),rec].sort((a,b)=>a.wk-b.wk));
+      setRatings(next);
+      // grade any logged entries for these games too
+      const commits=[];
+      history.filter(b=>b.hs==null&&b.game).forEach(b=>{const s=fr.finals.find(x=>x.home===b.game.home&&x.away===b.game.away);if(s){const ln=linesMap[b.game.home+"|"+b.game.away];const bb=(b.close==null&&ln&&ln.posted!=null)?{...b,close:ln.posted,closeOu:ln.ou}:b;commits.push({ts:b.ts,fields:{...gradeEntry(bb,s.hs,s.as),...(bb.close!=null&&b.close==null?{close:bb.close,closeOu:bb.closeOu}:{})}});}});
+      if(commits.length)onCommit(commits);
+      const missing=sched.length-games.length;
+      setSlateMsg("Week "+slateWk+": "+games.length+" games graded, "+(Object.keys(next).filter(t=>next[t]!==ratingsBefore[t]).length)+" ratings updated"+(missing?", "+missing+" not final yet":"")+(dropped.length?" -- DROPPED: "+dropped.join(", "):""));
+    }catch(e){setErr(e.message);}finally{setSlateBusy(false);}
+  };
+
+  // accuracy pools
+  const mechA=graded.filter(b=>b.mechOutcome);
+  const mW=mechA.filter(b=>b.mechOutcome==="W").length,mL=mechA.filter(b=>b.mechOutcome==="L").length,mP=mechA.filter(b=>b.mechOutcome==="P").length;
+  const slateGames=(slates||[]).flatMap(s=>s.games).filter(g=>g.mechOutcome);
+  const sW=slateGames.filter(g=>g.mechOutcome==="W").length,sL=slateGames.filter(g=>g.mechOutcome==="L").length,sP=slateGames.filter(g=>g.mechOutcome==="P").length;
+  const aiA=graded.filter(b=>b.outcome);
+  const aW=aiA.filter(b=>b.outcome==="W").length,aL=aiA.filter(b=>b.outcome==="L").length,aP=aiA.filter(b=>b.outcome==="P").length;
+  const ouA=graded.filter(b=>b.ouOutcome);
+  const oW=ouA.filter(b=>b.ouOutcome==="W").length,oL=ouA.filter(b=>b.ouOutcome==="L").length,oP=ouA.filter(b=>b.ouOutcome==="P").length;
+  const anyAcc=(mW+mL+sW+sL+aW+aL+oW+oL)>0;
+
+  const applyRating=b=>{
+    const s=ratingSuggestion(b,ratings,hfa);
+    if(!s)return;
+    setRatings(r=>({...r,[s.home]:s.nH,[s.away]:s.nA}));
+    onCommit([{ts:b.ts,fields:{ratingApplied:true}}]);
+  };
+
+  const ageH=last?Math.floor((Date.now()-last)/3600000):null;
+  const cur=slateFor(slateWk);
+  return(
+    <div style={{paddingBottom:40}}>
+      <div style={{margin:"16px 20px 0",background:"#F8F6F2",border:"1px solid #1f2937",borderRadius:4,padding:"14px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
+        <div>
+          <div style={{color:"#E04500",fontSize:10,letterSpacing:3,fontFamily:"Space Mono,monospace"}}>AUTO RESULTS -- 6H CYCLE</div>
+          <div style={{color:"#7A8E9A",fontSize:11,marginTop:3}}>{pending.length} awaiting scores -- {graded.length} graded{ageH!=null?" -- last fetch "+(ageH<1?"under 1h":ageH+"h")+" ago":""}</div>
+        </div>
+        <div style={{display:"flex",gap:6}}>
+          <button style={{...St.sm,color:"#1A6E3C",borderColor:"#1A6E3C66",padding:"9px 14px"}} onClick={captureClosers} disabled={closing||!pending.length}>{closing?"CAPTURING...":"CAPTURE CLOSING LINES"}</button>
+          <button style={{...St.sm,color:"#E04500",borderColor:"#E0450030",background:"#FB4F1411",padding:"9px 16px"}} onClick={fetchScores} disabled={fetching||!pending.length}>{fetching?"FETCHING...":"FETCH NOW"}</button>
+        </div>
+      </div>
+      {err&&<div style={{...St.err,margin:"8px 20px 0"}}>{err}</div>}
+
+      {(cB||cM||cO)&&(
+        <><H2>CLOSING LINE VALUE -- THE SCOREBOARD</H2>
+        <div style={{margin:"8px 20px 0",display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:8}}>
+          {[["YOUR BETS (AI SIDE)",cB],["MODEL PICKS",cM],["O/U TAKES",cO]].filter(([l,c])=>c).map(([l,c])=>(
+            <div key={l} style={{background:"#FFFFFF",border:"1px solid "+(c.m>0?"#1A6E3C44":"#1a1a1a"),borderRadius:4,padding:"12px 14px"}}>
+              <div style={{color:"#C8C0B0",fontSize:9,letterSpacing:2,fontFamily:"Space Mono,monospace"}}>{l}</div>
+              <div style={{display:"flex",gap:10,alignItems:"baseline",marginTop:4,flexWrap:"wrap"}}>
+                <span style={{fontFamily:"Space Mono,monospace",fontSize:17,fontWeight:700,color:c.m>0?"#1A6E3C":c.m<0?"#C0392B":"#0A1F35"}}>{c.m>0?"+":""}{c.m} pts</span>
+                <span style={{fontFamily:"Space Mono,monospace",fontSize:10,color:"#7A8E9A"}}>avg CLV, n={c.n}, +/-{c.se}</span>
+              </div>
+              <div style={{fontFamily:"Space Mono,monospace",fontSize:10,color:"#7A8E9A",marginTop:4}}>beat closer {c.pos} / lost to closer {c.neg} / flat {c.n-c.pos-c.neg}</div>
+              <div style={{fontSize:10,color:c.n>=30?(c.m>0.5?"#1A6E3C":c.m>0?"#7A8E9A":"#C0392B"):"#C8C0B0",marginTop:4}}>{c.n<30?"need 30+ for a read":c.m>0.5?"consistent edge signal":c.m>0?"slight edge, keep sampling":"market moves against you -- lines are not sharper than the book"}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{margin:"6px 20px 0",color:"#7A8E9A",fontSize:10}}>CLV = closing line minus your line, from your side. +1.0 means the number you bet closed a full point better. Independent of who covered -- converges in weeks, not seasons.</div></>
+      )}
+
+      <H2>WEEKLY SLATE -- GRADE ALL, UPDATE ALL 32</H2>
+      <div style={{margin:"8px 20px 0",background:"#FFFFFF",border:"1px solid #FB4F1422",borderRadius:4,padding:"14px 16px"}}>
+        <div style={{color:"#7ABAE5",fontSize:12,lineHeight:1.5,marginBottom:10}}>Walters re-rates every team every week. Grading the full slate applies TGPL to all 32 (injury diffs from your analyses where available) and feeds calibration with unbiased model-vs-market data.</div>
+        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+          <button style={{...St.sm,padding:"6px 10px"}} onClick={()=>setSlateWk(w=>Math.max(1,w-1))}>-</button>
+          <span style={{fontFamily:"Space Mono,monospace",fontSize:13,fontWeight:700,color:"#0A1F35",minWidth:70,textAlign:"center"}}>WEEK {slateWk}</span>
+          <button style={{...St.sm,padding:"6px 10px"}} onClick={()=>setSlateWk(w=>Math.min(18,w+1))}>+</button>
+          <button style={{...St.sm,color:"#E04500",borderColor:"#E0450030",background:"#FB4F1411",padding:"9px 16px"}} onClick={gradeWeek} disabled={slateBusy}>{slateBusy?"GRADING...":cur?"RE-GRADE WEEK "+slateWk:"GRADE WEEK "+slateWk}</button>
+          {cur&&<span style={{fontFamily:"Space Mono,monospace",fontSize:10,color:"#1A6E3C"}}>graded {cur.games.length}/{cur.nSched}{cur.games.filter(g=>g.close!=null).length?" -- "+cur.games.filter(g=>g.close!=null).length+" with closing lines":" -- no closing lines cached (fetch Alerts during game week)"}</span>}
+        </div>
+        {slateMsg&&<div style={{color:"#1A6E3C",fontSize:11,marginTop:8,fontFamily:"Space Mono,monospace"}}>{slateMsg}</div>}
+        {cur&&cur.games.length>0&&(
+          <div style={{marginTop:10,display:"flex",flexDirection:"column",gap:3}}>
+            {cur.games.map(g=>(
+              <div key={g.home+g.away} style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:11,padding:"4px 0",borderTop:"1px solid #F2EEE6",flexWrap:"wrap"}}>
+                <span style={{color:"#1A3A5C"}}>{ABBR[g.away]} {g.as} @ {ABBR[g.home]} {g.hs}</span>
+                <span style={{fontFamily:"Space Mono,monospace",fontSize:10,color:"#7A8E9A"}}>model {g.modelLine>0?"+":""}{g.modelLine}{g.close!=null?" / mkt "+(g.close>0?"+":"")+g.close:""} -- {ABBR[g.home]} {g.hR>=0?"+":""}{g.hR} to {g.nH>=0?"+":""}{g.nH}{g.mechOutcome?<span style={{color:g.mechOutcome==="W"?"#1A6E3C":g.mechOutcome==="L"?"#C0392B":"#7ABAE5",fontWeight:700}}> {g.stars}* {g.mechOutcome}</span>:null}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <H2>CALIBRATION -- LEARNED FROM RESULTS</H2>
+      <div style={{margin:"8px 20px 0",background:"#FFFFFF",border:"1px solid "+(calib&&calib.on?"#1A6E3C44":"#DDD8CF"),borderRadius:4,padding:"14px 16px"}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:8,marginBottom:10}}>
+          {[["HOME FIELD",(hfa).toFixed(2)+" pts",(calib&&calib.hfaAdj?((calib.hfaAdj>0?"+":"")+calib.hfaAdj+" learned"):"book 2.0"),"n="+(calib?calib.nHfa:0)+" slate games"],
+            ["O/U SCALAR","x"+(calib?calib.ouScalar:1),(calib&&calib.nOu?"actual/model totals":"default 1.0"),"n="+(calib?calib.nOu:0)+" analyzed"],
+            ["QB MULTIPLIER",(calib&&calib.nQb>=5?calib.qbMult:1)+"x",(calib&&calib.nQb>=5?"min-error fit":"needs 5 QB-injury games"),"n="+(calib?calib.nQb:0)],
+            ["INFO COEFFICIENT",(calib&&calib.ic!=null)?calib.ic.toFixed(2):"--",(calib&&calib.ic!=null)?(calib.ic>0.3?"disagreement is informative":calib.ic>0.1?"weak signal":"disagreement = noise, stars are not bets"):"needs 8 slate games w/ closing lines","n="+(calib?calib.nIc:0)+" (11-yr hist 0.02, oracle 0.77)"]].map(([l,v,sub,n])=>(
+            <div key={l} style={{background:"#F8F6F2",border:"1px solid #1a1a1a",borderRadius:3,padding:"10px 12px"}}>
+              <div style={{color:"#C8C0B0",fontSize:9,letterSpacing:2,fontFamily:"Space Mono,monospace"}}>{l}</div>
+              <div style={{fontFamily:"Space Mono,monospace",fontSize:15,fontWeight:700,color:"#0A1F35",marginTop:3}}>{v}</div>
+              <div style={{fontSize:10,color:"#7A8E9A"}}>{sub}</div>
+              <div style={{fontFamily:"Space Mono,monospace",fontSize:9,color:"#C8C0B0"}}>{n}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+          <button style={{...St.sm,color:calib&&calib.on?"#1A6E3C":"#7A8E9A",borderColor:calib&&calib.on?"#1A6E3C66":"#DDD8CF"}} onClick={()=>setCalib(c=>({...c,on:!c.on}))}>{calib&&calib.on?"LEARNED CALIBRATION: ON":"LEARNED CALIBRATION: OFF"}</button>
+          <span style={{color:"#7A8E9A",fontSize:10}}>Priors from 11 seasons (2,544 games): HFA 2.0 and TGPL 0.9 are optimal, prior weight {CALIB_PRIOR_N}. Historical star-play ATS: {Object.entries(HIST_STARS).sort((a,b)=>parseFloat(a[0])-parseFloat(b[0])).map(([s,h])=>s+"* "+h.p+"%").join(", ")} -- stars measure market disagreement; they only pay when the info coefficient is positive.</span>
+        </div>
+      </div>
+
+      {anyAcc&&(
+        <><H2>FORMULA ACCURACY vs 52.4%</H2>
+        <div style={{margin:"8px 20px 0",display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:8}}>
+          <AccCard lbl="MODEL vs MARKET -- FULL SLATE" w={sW} l={sL} p={sP}/>
+          <AccCard lbl="MODEL PICKS -- ANALYZED GAMES" w={mW} l={mL} p={mP}/>
+          <AccCard lbl="AI RECS -- ANALYZED GAMES" w={aW} l={aL} p={aP}/>
+          <AccCard lbl="O/U TAKES" w={oW} l={oL} p={oP}/>
+        </div></>
+      )}
+
+      {graded.length>0&&(
+        <><H2>COMPLETED -- {graded.length}</H2>
+        <div style={{margin:"8px 20px 0",display:"flex",flexDirection:"column",gap:6}}>
+          {graded.map(b=>{
+            const margin=b.hs-b.as,sp=parseFloat(b.game.spread);
+            const sug=b.ratingApplied?null:ratingSuggestion(b,ratings,hfa);
+            const inSlate=(slates||[]).some(s=>s.games.some(g=>g.home===b.game.home&&g.away===b.game.away));
+            return(
+              <div key={b.ts} style={{background:"#FFFFFF",border:"1px solid #1a1a1a",borderRadius:3,padding:"11px 14px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8,alignItems:"center"}}>
+                  <div>
+                    <div style={{color:"#1A3A5C",fontSize:13,fontWeight:600}}>{b.game.away} {b.as} @ {b.game.home} {b.hs}</div>
+                    <div style={{color:"#7A8E9A",fontSize:10,fontFamily:"Space Mono,monospace",marginTop:3}}>
+                      margin {margin>0?"+":""}{margin} vs line {sp>0?"+":""}{sp} -- {b.result?.recommendation||""}{b.mech&&b.mech.side?" / model "+b.mech.side.toUpperCase()+" "+b.mech.stars+"*":""}{b.ouRec&&b.ouRec!=="NO BET"?" / "+b.ouRec+" "+b.game.ou:""}
+                    </div>
+                  </div>
+                  <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                    {b.clv!=null&&<Tag t={"CLV "+(b.clv>0?"+":"")+b.clv} c={b.clv>0?"#1A6E3C":b.clv<0?"#C0392B":"#7ABAE5"}/>}
+                    {b.mechOutcome&&<Tag t={"MODEL "+b.mechOutcome} c={b.mechOutcome==="W"?"#1A6E3C":b.mechOutcome==="L"?"#C0392B":"#7ABAE5"}/>}
+                    {b.outcome&&<Tag t={"AI "+b.outcome} c={b.outcome==="W"?"#1A6E3C":b.outcome==="L"?"#C0392B":"#7ABAE5"}/>}
+                    {b.ouOutcome&&<Tag t={"O/U "+b.ouOutcome} c={b.ouOutcome==="W"?"#1A6E3C":b.ouOutcome==="L"?"#C0392B":"#7ABAE5"}/>}
+                  </div>
+                </div>
+                {sug&&!inSlate&&(
+                  <div style={{marginTop:8,paddingTop:8,borderTop:"1px solid #F2EEE6",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+                    <span style={{fontFamily:"Space Mono,monospace",fontSize:10,color:"#7A8E9A"}}>
+                      TGPL: {ABBR[sug.home]} {sug.hR>=0?"+":""}{sug.hR} to <span style={{color:sug.nH>sug.hR?"#1A6E3C":"#C0392B"}}>{sug.nH>=0?"+":""}{sug.nH}</span> -- {ABBR[sug.away]} {sug.aR>=0?"+":""}{sug.aR} to <span style={{color:sug.nA>sug.aR?"#1A6E3C":"#C0392B"}}>{sug.nA>=0?"+":""}{sug.nA}</span>
+                    </span>
+                    <button style={{...St.sm,fontSize:9,color:"#1A6E3C",borderColor:"#1A6E3C66"}} onClick={()=>applyRating(b)}>APPLY RATING UPDATE</button>
+                  </div>
+                )}
+                {inSlate&&!b.ratingApplied&&<div style={{marginTop:6,fontFamily:"Space Mono,monospace",fontSize:9,color:"#7A8E9A"}}>rated via weekly slate</div>}
+                {b.ratingApplied&&<div style={{marginTop:6,fontFamily:"Space Mono,monospace",fontSize:9,color:"#1A6E3C"}}>RATINGS UPDATED</div>}
+              </div>
+            );
+          })}
+        </div></>
+      )}
+
+      {pending.length>0&&(
+        <><H2>AWAITING SCORES -- {pending.length}</H2>
+        <div style={{margin:"8px 20px 0",display:"flex",flexDirection:"column",gap:5}}>
+          {pending.map(b=>(
+            <div key={b.ts} style={{background:"#F8F6F2",border:"1px solid #E8E4DC",borderRadius:3,padding:"9px 14px",display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8,alignItems:"center"}}>
+              <div>
+                <div style={{color:"#5A7A90",fontSize:12}}>{b.game.away} @ {b.game.home}</div>
+                <div style={{color:"#C8C0B0",fontSize:10,fontFamily:"Space Mono,monospace"}}>{b.result?.recommendation||""}{b.close!=null?" -- bet "+(parseFloat(b.game.spread)>0?"+":"")+b.game.spread+" / close "+(b.close>0?"+":"")+b.close:" -- closer not captured"}</div>
+              </div>
+              <ScoreEntry b={b} onSave={manualScore(b)}/>
+            </div>
+          ))}
+        </div></>
+      )}
+
+      {history.length===0&&(slates||[]).length===0&&(
+        <div style={{textAlign:"center",padding:"40px 20px",color:"#C8C0B0",fontSize:13}}>Analyses auto-log to the pipeline -- finals get fetched and graded every 6 hours. Grade full weeks above to re-rate all 32 teams.</div>
+      )}
+    </div>
+  );
+}
+
+// -- LOG & STATS TAB --
+function LogTab({history,onUpdate}){
+  // ATS stats -- over real bets only (NO BET analyses tracked separately in Results)
+  const bets=history.filter(isBet);
+  const W=bets.filter(h=>h.outcome==="W").length;
+  const L=bets.filter(h=>h.outcome==="L").length;
+  const P=bets.filter(h=>h.outcome==="P").length;
+  const N=bets.length;
+  const decided=W+L;
+  const wr=decided?(W/decided*100).toFixed(1):0;
+  const pnl=bets.reduce((a,b)=>a+(b.pnl||0),0);
+  const wagered=bets.reduce((a,b)=>a+(b.betSize||0),0);
+  const roi=wagered>0?((pnl/wagered)*100).toFixed(1):0;
+
+  // O/U stats
+  const ouBets=history.filter(b=>b.ouRec&&b.ouRec!=="NO BET"&&b.ouRec!=="no bet");
+  const ouW=ouBets.filter(b=>b.ouOutcome==="W").length;
+  const ouL=ouBets.filter(b=>b.ouOutcome==="L").length;
+  const ouD=ouW+ouL;
+  const ouWr=ouD>0?(ouW/ouD*100).toFixed(1):null;
+  const ouPnl=ouBets.reduce((a,b)=>a+(b.ouPnl||0),0);
+
+  const byStar=[3,2.5,2,1.5,1,0.5].map(s=>{
+    const sb=bets.filter(b=>b.game?.stars===s);
+    const w=sb.filter(b=>b.outcome==="W").length,l=sb.filter(b=>b.outcome==="L").length;
+    const p=sb.reduce((a,b)=>a+(b.pnl||0),0);
+    return{s,n:sb.length,w,l,wr:(w+l)?(w/(w+l)*100).toFixed(0):"-",pnl:p};
+  }).filter(x=>x.n>0);
+
+  return(
+    <div style={{paddingBottom:40}}>
+      <H2>PERFORMANCE DASHBOARD</H2>
+      <div style={{margin:"10px 20px 0",display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))",gap:8}}>
+        {[["RECORD",W+"-"+L+(P?"-"+P:""),W>L?"#1A6E3C":W<L?"#C0392B":"#7ABAE5"],["WIN RATE",wr+"%",parseFloat(wr)>52.38?"#1A6E3C":"#C0392B"],["BREAK-EVEN","52.4%","#7A8E9A"],["P&L",pnl>=0?"+$"+pnl.toLocaleString():"-$"+Math.abs(pnl).toLocaleString(),pnl>=0?"#1A6E3C":"#C0392B"],["ROI",roi+"%",parseFloat(roi)>0?"#1A6E3C":"#C0392B"],["BETS",N,"#E04500"]].map(([l,v,c])=>(
+          <div key={l} style={{background:"#FFFFFF",border:"1px solid #1a1a1a",borderRadius:4,padding:"12px 14px",textAlign:"center"}}>
+            <div style={{color:"#C8C0B0",fontSize:9,letterSpacing:2,fontFamily:"Space Mono,monospace"}}>{l}</div>
+            <div style={{color:c,fontSize:17,fontWeight:700,fontFamily:"Space Mono,monospace",marginTop:4}}>{v}</div>
+          </div>
+        ))}
+      </div>
+
+      {ouBets.length>0&&(
+        <div style={{margin:"8px 20px 0",display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+          <div style={{background:"#FFFFFF",border:"1px solid #1a1a1a",borderRadius:4,padding:"12px 14px",textAlign:"center"}}>
+            <div style={{color:"#C8C0B0",fontSize:9,letterSpacing:2,fontFamily:"Space Mono,monospace"}}>O/U RECORD</div>
+            <div style={{color:ouW>ouL?"#1A6E3C":ouW<ouL?"#C0392B":"#7ABAE5",fontSize:17,fontWeight:700,fontFamily:"Space Mono,monospace",marginTop:4}}>{ouW}-{ouL}</div>
+            {ouWr&&<div style={{color:parseFloat(ouWr)>52.38?"#1A6E3C":"#C0392B",fontSize:11,fontFamily:"Space Mono,monospace",marginTop:2}}>{ouWr}%</div>}
+          </div>
+          <div style={{background:"#FFFFFF",border:"1px solid #1a1a1a",borderRadius:4,padding:"12px 14px",textAlign:"center"}}>
+            <div style={{color:"#C8C0B0",fontSize:9,letterSpacing:2,fontFamily:"Space Mono,monospace"}}>O/U P&L</div>
+            <div style={{color:ouPnl>=0?"#1A6E3C":"#C0392B",fontSize:17,fontWeight:700,fontFamily:"Space Mono,monospace",marginTop:4}}>{ouPnl>=0?"+$":"-$"}{Math.abs(ouPnl).toLocaleString()}</div>
+          </div>
+        </div>
+      )}
+
+      {N>0&&(
+        <div style={{margin:"10px 20px 0",background:"#FFFFFF",border:"1px solid #1a1a1a",borderRadius:4,padding:"12px 16px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
+            <span style={{color:"#7A8E9A",fontSize:10,letterSpacing:2,fontFamily:"Space Mono,monospace"}}>WIN RATE vs 52.4% BREAK-EVEN</span>
+            <span style={{color:parseFloat(wr)>52.38?"#1A6E3C":"#C0392B",fontSize:11,fontFamily:"Space Mono,monospace",fontWeight:700}}>{wr}%</span>
+          </div>
+          <div style={{background:"#F8F6F2",borderRadius:4,height:8,overflow:"hidden",position:"relative"}}>
+            <div style={{position:"absolute",left:"52.38%",top:0,bottom:0,width:2,background:"#E04500",zIndex:2}}/>
+            <div style={{height:"100%",width:Math.min(parseFloat(wr)||0,100)+"%",background:parseFloat(wr)>52.38?"#1A6E3C":"#C0392B",borderRadius:4,transition:"width 0.8s ease"}}/>
+          </div>
+        </div>
+      )}
+
+      {byStar.length>0&&(
+        <><H2>BY STAR RATING</H2>
+        <div style={{margin:"8px 20px 0",display:"flex",flexDirection:"column",gap:5}}>
+          {byStar.map(({s,n,w,l,wr:wr2,pnl:p})=>(
+            <div key={s} style={{background:"#FFFFFF",border:"1px solid #1a1a1a",borderRadius:3,padding:"10px 14px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+              <Stars s={s}/><span style={{color:"#5A7A90",fontFamily:"Space Mono,monospace",fontSize:12,minWidth:55}}>{s} star</span>
+              <span style={{color:"#7A8E9A",fontSize:11}}>{n} bets</span>
+              <span style={{color:"#5A7A90",fontFamily:"Space Mono,monospace",fontSize:11}}>{w}W-{l}L</span>
+              <span style={{color:parseFloat(wr2)>52?"#1A6E3C":"#C0392B",fontFamily:"Space Mono,monospace",fontSize:12,fontWeight:700}}>{wr2}%</span>
+              <span style={{color:p>=0?"#1A6E3C":"#C0392B",fontFamily:"Space Mono,monospace",fontSize:12,marginLeft:"auto"}}>{p>=0?"+":"-"}${Math.abs(p).toLocaleString()}</span>
+            </div>
+          ))}
+        </div></>
+      )}
+
+      <H2>BET LOG</H2>
+      {history.length===0?(
+        <div style={{color:"#DDD8CF",textAlign:"center",padding:"30px",fontSize:13}}>Nothing yet. Every analysis auto-logs here -- bets count toward P&L, NO BET games track formula accuracy.</div>
+      ):(
+        <div style={{margin:"8px 20px 0",display:"flex",flexDirection:"column",gap:5}}>
+          {history.map((b,i)=>(
+            <div key={i} style={{background:"#FFFFFF",border:"1px solid #1a1a1a",borderRadius:3,padding:"11px 14px",opacity:isBet(b)?1:0.55,borderLeft:isBet(b)?"1px solid #1a1a1a":"3px solid #C8C0B0"}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:8}}>
+                <div style={{flex:1,minWidth:180}}>
+                  <div style={{color:"#1A3A5C",fontSize:13,fontWeight:600}}>{b.game?.away} @ {b.game?.home}</div>
+                  <div style={{display:"flex",gap:8,marginTop:3,alignItems:"center",flexWrap:"wrap"}}>
+                    <Stars s={b.game?.stars||0}/><span style={{color:"#C8C0B0",fontSize:11}}>{b.result?.recommendation}</span>
+                    <span style={{color:"#DDD8CF",fontFamily:"Space Mono,monospace",fontSize:11}}>${(b.betSize||0).toLocaleString()}</span>
+                    {b.game?.ou&&<span style={{color:"#C8C0B0",fontSize:11,fontFamily:"Space Mono,monospace"}}>o/u {b.game.ou}</span>}
+                  </div>
+                </div>
+              </div>
+              <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+                {isBet(b)&&<div style={{display:"flex",gap:3,alignItems:"center"}}>
+                  <span style={{fontSize:10,fontFamily:"Space Mono,monospace",color:"#7A8E9A",marginRight:2}}>ATS</span>
+                  {b.outcome&&<span style={{color:b.outcome==="W"?"#1A6E3C":b.outcome==="L"?"#C0392B":"#7ABAE5",fontFamily:"Space Mono,monospace",fontSize:11,fontWeight:700,marginRight:4}}>{b.outcome==="W"?"+$"+b.betSize:b.outcome==="L"?"-$"+Math.round(b.betSize*1.1):"PUSH"}</span>}
+                  {["W","L","P"].map(o=>(
+                    <button key={o} onClick={()=>onUpdate(i,o,"outcome")} style={{background:b.outcome===o?(o==="W"?"#D1FAE533":o==="L"?"#FEE2E233":"#F3F4F633"):"transparent",border:"1px solid "+(b.outcome===o?(o==="W"?"#1A6E3C":o==="L"?"#C0392B":"#7ABAE5"):"#DDD8CF"),color:b.outcome===o?(o==="W"?"#1A6E3C":o==="L"?"#C0392B":"#7ABAE5"):"#C8C0B0",width:28,height:28,borderRadius:3,cursor:"pointer",fontSize:11,fontWeight:700,fontFamily:"Space Mono,monospace"}}>{o}</button>
+                  ))}
+                </div>}
+                {b.ouRec&&b.ouRec!=="NO BET"&&b.ouRec!=="no bet"&&(
+                  <div style={{display:"flex",gap:3,alignItems:"center"}}>
+                    <span style={{fontSize:10,fontFamily:"Space Mono,monospace",color:"#7A8E9A",marginRight:2}}>O/U ({b.ouRec})</span>
+                    {b.ouOutcome&&<span style={{color:b.ouOutcome==="W"?"#1A6E3C":b.ouOutcome==="L"?"#C0392B":"#7ABAE5",fontFamily:"Space Mono,monospace",fontSize:11,fontWeight:700,marginRight:4}}>{b.ouOutcome==="W"?"+$"+b.betSize:b.ouOutcome==="L"?"-$"+Math.round(b.betSize*1.1):"PUSH"}</span>}
+                    {["W","L","P"].map(o=>(
+                      <button key={o} onClick={()=>onUpdate(i,o,"ouOutcome")} style={{background:b.ouOutcome===o?(o==="W"?"#D1FAE533":o==="L"?"#FEE2E233":"#F3F4F633"):"transparent",border:"1px solid "+(b.ouOutcome===o?(o==="W"?"#1A6E3C":o==="L"?"#C0392B":"#7ABAE5"):"#DDD8CF"),color:b.ouOutcome===o?(o==="W"?"#1A6E3C":o==="L"?"#C0392B":"#7ABAE5"):"#C8C0B0",width:28,height:28,borderRadius:3,cursor:"pointer",fontSize:11,fontWeight:700,fontFamily:"Space Mono,monospace"}}>{o}</button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// -- BANKROLL BAR --
+function BkBar({bankroll,setBankroll,unit,setUnit,history}){
+  const bets=history.filter(isBet);
+  const W=bets.filter(h=>h.outcome==="W").length,L=bets.filter(h=>h.outcome==="L").length;
+  const pnl=bets.reduce((a,b)=>a+(b.pnl||0),0);
+  const wr=(W+L)?(W/(W+L)*100).toFixed(1):null;
+  return(
+    <div style={{margin:"0 20px",background:"#FFFFFF",border:"1px solid #1a1a1a",borderRadius:4,padding:"12px 18px",display:"flex",gap:16,flexWrap:"wrap",alignItems:"flex-end"}}>
+      {[["BANKROLL ($)",bankroll,setBankroll],["UNIT ($)",unit,setUnit]].map(([lbl,val,fn])=>(
+        <div key={lbl} style={{flex:1,minWidth:120}}>
+          <div style={St.lbl}>{lbl}{lbl.includes("UNIT")&&bankroll?<span style={{color:"#C8C0B0"}}> = {((unit/bankroll)*100).toFixed(1)}%</span>:null}</div>
+          <input style={{...St.inp,fontFamily:"Space Mono,monospace",fontWeight:700,fontSize:14}} type="number" value={val} onChange={e=>fn(+e.target.value)}/>
+        </div>
+      ))}
+      {[[W+"-"+L,"RECORD",W>L?"#1A6E3C":W<L?"#C0392B":"#7ABAE5"],[wr?wr+"%":"--","WIN RATE",wr&&parseFloat(wr)>52.38?"#1A6E3C":"#C0392B"],[pnl>=0?"+$"+pnl.toLocaleString():"-$"+Math.abs(pnl).toLocaleString(),"P&L",pnl>=0?"#1A6E3C":"#C0392B"]].map(([v,l,c])=>(
+        <div key={l} style={{textAlign:"center",minWidth:65}}>
+          <div style={{color:"#C8C0B0",fontSize:9,letterSpacing:2,fontFamily:"Space Mono,monospace"}}>{l}</div>
+          <div style={{color:c,fontSize:15,fontWeight:700,fontFamily:"Space Mono,monospace",marginTop:2}}>{v}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// -- SETTINGS TAB (standalone/deployed builds only) --
+function SettingsTab(){
+  const[akey,setAkey]=useState(()=>localStorage.getItem("wnfl_akey")||"");
+  const[okey,setOkey]=useState(()=>localStorage.getItem("oapi")||"");
+  const[saved,setSaved]=useState(false);
+  const save=()=>{
+    try{localStorage.setItem("wnfl_akey",akey.trim());if(okey.trim())localStorage.setItem("oapi",okey.trim());else localStorage.removeItem("oapi");}catch{}
+    setSaved(true);setTimeout(()=>setSaved(false),2000);
+  };
+  return(
+    <div style={{paddingBottom:40}}>
+      <H2>API KEYS</H2>
+      <div style={{margin:"10px 20px 0",background:"#FFFFFF",border:"1px solid #FB4F1422",borderRadius:4,padding:"18px"}}>
+        <div style={{marginBottom:14}}>
+          <div style={St.lbl}>ANTHROPIC API KEY (required -- powers rosters, lines, analysis, results)</div>
+          <input style={{...St.inp,fontFamily:"Space Mono,monospace"}} type="password" placeholder="sk-ant-..." value={akey} onChange={e=>setAkey(e.target.value)}/>
+          <div style={{color:"#7A8E9A",fontSize:11,marginTop:4}}>Get one at console.anthropic.com -- stored only in this browser (localStorage)</div>
+        </div>
+        <div style={{marginBottom:14}}>
+          <div style={St.lbl}>THE ODDS API KEY (optional -- per-book lines in Alerts)</div>
+          <input style={{...St.inp,fontFamily:"Space Mono,monospace"}} type="password" placeholder="Free key from theoddsapi.com" value={okey} onChange={e=>setOkey(e.target.value)}/>
+          <div style={{color:"#7A8E9A",fontSize:11,marginTop:4}}>With a key, Alerts pulls DK/FD/Caesars/MGM directly; without one it uses Claude web search</div>
+        </div>
+        <button style={St.btn} onClick={save}>SAVE KEYS</button>
+        {saved&&<div style={{color:"#1A6E3C",fontSize:12,marginTop:8,fontFamily:"Space Mono,monospace"}}>SAVED</div>}
+      </div>
+    </div>
+  );
+}
+
+// -- MAIN --
+function App(){
+  const[tab,setTab]=useState("alerts");
+  const[bankroll,setBankroll]=useState(10000);
+  const[unit,setUnit]=useState(100);
+  const[history,setHistory]=useState(()=>{try{return JSON.parse(localStorage.getItem("wnfl_log"))||[];}catch{return[];}});
+  const[ratings,setRatings]=useState(()=>{try{return JSON.parse(localStorage.getItem("wnfl_ratings"))||{...DEFAULT_RATINGS};}catch{return{...DEFAULT_RATINGS};}});
+  const[prefill,setPrefill]=useState(null);
+
+  const[slates,setSlates]=useState(()=>{try{return JSON.parse(localStorage.getItem("wnfl_slates"))||[];}catch{return[];}});
+  const[calib,setCalib]=useState(()=>{try{return{...CALIB_DEFAULT,...(JSON.parse(localStorage.getItem("wnfl_calib"))||{})};}catch{return{...CALIB_DEFAULT};}});
+  const[qbMode,setQbMode]=useState(()=>localStorage.getItem("wnfl_qbmode")||"1");
+
+  useEffect(()=>{try{localStorage.setItem("wnfl_log",JSON.stringify(history));}catch{}},[history]);
+  useEffect(()=>{try{localStorage.setItem("wnfl_ratings",JSON.stringify(ratings));}catch{}},[ratings]);
+  useEffect(()=>{try{localStorage.setItem("wnfl_slates",JSON.stringify(slates));}catch{}},[slates]);
+  useEffect(()=>{try{localStorage.setItem("wnfl_calib",JSON.stringify(calib));}catch{}},[calib]);
+  useEffect(()=>{try{localStorage.setItem("wnfl_qbmode",qbMode);}catch{}},[qbMode]);
+  // re-learn calibration whenever graded data changes
+  useEffect(()=>{setCalib(prev=>computeCalibration(slates,history,prev));},[slates,history]);
+
+  const pick=g=>{setPrefill(g);setTab("analyze");};
+  // upsert: re-analyzing a matchup replaces its ungraded entry instead of duplicating
+  const logBet=bet=>setHistory(h=>{
+    const i=h.findIndex(b=>b.game?.home===bet.game?.home&&b.game?.away===bet.game?.away&&b.outcome==null&&b.ouOutcome==null);
+    if(i>=0){const c=[...h];c[i]=bet;return c;}
+    return[bet,...h];
+  });
+  const commitScores=commits=>setHistory(h=>h.map(b=>{
+    const c=commits.find(x=>x.ts===b.ts);
+    return c?{...b,...c.fields}:b;
+  }));
+  const updOut=(i,o,field="outcome")=>setHistory(h=>h.map((b,idx)=>{
+    if(idx!==i)return b;
+    if(field==="outcome"){
+      const p=o==="W"?b.betSize:o==="L"?-(b.betSize*1.1):0;
+      return{...b,outcome:b.outcome===o?null:o,pnl:b.outcome===o?0:p};
+    }
+    if(field==="ouOutcome"){
+      const p=o==="W"?b.betSize:o==="L"?-(b.betSize*1.1):0;
+      return{...b,ouOutcome:b.ouOutcome===o?null:o,ouPnl:b.ouOutcome===o?0:p};
+    }
+    return b;
+  }));
+
+  const STANDALONE=typeof window!=="undefined"&&window.WALTERS_STANDALONE;
+  const TABS=[["alerts","ALERTS"],["analyze","ANALYZE"],["results","RESULTS"],["schedule","SCHEDULE"],["ratings","RATINGS"],["log","LOG & STATS"],...(STANDALONE?[["settings","SETTINGS"]]:[])];
+
+  return(
+    <div style={{background:"#F4F1EC",minHeight:"100vh",color:"#0A1F35",fontFamily:"Source Sans 3,sans-serif",maxWidth:860,margin:"0 auto"}}>
+      <div style={{background:"linear-gradient(135deg,#001C30 0%,#00111E 55%,#1A0800 100%)",borderBottom:"1px solid #1A3A5C",padding:"22px 24px 18px",display:"flex",justifyContent:"space-between",alignItems:"flex-end",flexWrap:"wrap",gap:10}}>
+        <div>
+          <div style={{color:"#8A9EAE",fontSize:9,letterSpacing:5,marginBottom:6,fontFamily:"Space Mono,monospace"}}>SPORTS BETTING INTELLIGENCE</div>
+          <h1 style={{margin:0,fontSize:34,fontWeight:700,letterSpacing:6,color:"#ffffff",fontFamily:"Oswald,sans-serif",lineHeight:1}}>WALTERS<span style={{color:"#E04500"}}> SYSTEM</span></h1>
+          <div style={{color:"#8A9EAE",fontSize:11,marginTop:4}}>Live odds -- Edge detection -- Power ratings -- Line movement -- Analytics</div>
+        </div>
+        <div style={{textAlign:"right",borderLeft:"1px solid #1A3A5C",paddingLeft:18}}>
+          <div style={{color:"#E04500",fontSize:10,letterSpacing:3}}>BREAK-EVEN</div>
+          <div style={{color:"#fff",fontSize:24,fontWeight:900,fontFamily:"Space Mono,monospace"}}>52.4%</div>
+          <div style={{color:"#C8C0B0",fontSize:10}}>required win rate</div>
+        </div>
+      </div>
+
+      <div style={{display:"flex",borderBottom:"1px solid #1a1a1a",background:"#FFFFFF",padding:"0 16px",overflowX:"auto",borderBottom:"1px solid #E8E4DC"}}>
+        {TABS.map(([id,lbl])=>(
+          <button key={id} onClick={()=>setTab(id)} style={{background:"transparent",border:"none",borderBottom:"3px solid "+(tab===id?"#E04500":"transparent"),color:tab===id?"#E04500":"#8A9EAE",background:"transparent",fontSize:11,letterSpacing:2,padding:"12px 14px",cursor:"pointer",fontFamily:"Space Mono,monospace",fontWeight:700,whiteSpace:"nowrap"}}>
+            {lbl}
+          </button>
+        ))}
+      </div>
+
+      {["analyze","log"].includes(tab)&&(
+        <div style={{padding:"12px 0 0"}}>
+          <BkBar bankroll={bankroll} setBankroll={setBankroll} unit={unit} setUnit={setUnit} history={history}/>
+        </div>
+      )}
+
+      {tab==="alerts"   &&<AlertsTab ratings={ratings} onPick={pick} calib={calib}/>}
+      {tab==="analyze"  &&<AnalyzeTab ratings={ratings} bankroll={bankroll} unit={unit} onLog={logBet} prefill={prefill} calib={calib} qbMode={qbMode} setQbMode={setQbMode}/>}
+      {tab==="results"  &&<ResultsTab history={history} onCommit={commitScores} ratings={ratings} setRatings={setRatings} calib={calib} setCalib={setCalib} slates={slates} setSlates={setSlates}/>}
+      {tab==="schedule" &&<ScheduleTab ratings={ratings} calib={calib}/>}
+      {tab==="ratings"  &&<RatingsTab ratings={ratings} setRatings={setRatings}/>}
+      {tab==="log"      &&<LogTab history={history} onUpdate={updOut}/>}
+      {tab==="settings" &&<SettingsTab/>}
+
+      <EthFooter />
+    </div>
+  );
+}
+
+if(typeof document!=="undefined"){
+  const s=document.createElement("style");
+  s.textContent=`
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes pulseOrange{0%,100%{box-shadow:0 0 0 0 rgba(251,79,20,0.15)}50%{box-shadow:0 0 0 4px rgba(251,79,20,0)}}
+  * {-webkit-font-smoothing:antialiased;}
+  select option{background:#001C30;color:#E8F4FF;}
+  select:focus,input:focus{outline:none;border-color:#FB4F14 !important;box-shadow:0 0 0 2px rgba(251,79,20,0.12);}
+  input[type=range]{height:4px;cursor:pointer;}
+  input[type=range]::-webkit-slider-thumb{width:18px;height:18px;background:#FB4F14;border:3px solid #001C30;box-shadow:0 0 4px rgba(251,79,20,0.5);}
+  ::-webkit-scrollbar{width:4px;height:4px;}
+  ::-webkit-scrollbar-track{background:#00111E;}
+  ::-webkit-scrollbar-thumb{background:#FB4F1444;border-radius:4px;}
+  ::-webkit-scrollbar-thumb:hover{background:#FB4F1466;}
+  button:active{transform:scale(0.97);}
+`; 
+  document.head.appendChild(s);
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
+</script>
+</body>
+</html>

@@ -1,0 +1,178 @@
+2025 NFL pass rush, run stop, blocking win rate rankings
+Last updated: Through all Week 18 games, Jan. 6, 10:30 a.m. ET
+
+Edge Pass Rush Win Rate Rankings
+RANK NAME TEAM WINS PLAYS PRWR EDGE%
+1 Nick Herbig PIT 45 180 25% 12%
+2 Nik Bonitto DEN 57 241 24% 16%
+3 Micah Parsons GB 51 218 23% 31%
+4 Will Anderson Jr. HOU 62 270 23% 16%
+5 Abdul Carter NYG 47 227 21% 16%
+6 Myles Garrett CLE 56 272 21% 29%
+7 Chase Young NO 32 171 19% 13%
+8 Boye Mafe SEA 34 182 19% 18%
+9 Josh Sweat ARI 36 196 18% 15%
+10 Odafe Oweh BAL 34 204 17% 15%
+11 Brian Burns NYG 35 216 16% 12%
+12 Bryce Huff SF 33 216 15% 18%
+13 Yaya Diaby TB 37 247 15% 19%
+14 Maxx Crosby LV 43 288 15% 23%
+15 DeMarcus Lawrence SEA 27 187 14% 19%
+16 James Pearce Jr. ATL 29 201 14% 11%
+17 Aidan Hutchinson DET 54 380 14% 20%
+18 Josh Hines-Allen JAX 41 289 14% 19%
+19 Danielle Hunter HOU 38 280 14% 21%
+20 Malcolm Koonce LV 25 188 13% 12%
+DT Pass Rush Win Rate Rankings
+RANK NAME TEAM WINS PLAYS PRWR DT%
+1 Chris Jones KC 47 230 20% 63%
+2 Jeffery Simmons TEN 37 243 15% 67%
+3 Calais Campbell ARI 26 178 15% 66%
+4 Quinnen Williams DAL 29 207 14% 59%
+5 Kobie Turner LAR 38 280 14% 67%
+6 DeForest Buckner IND 22 180 12% 65%
+7 Christian Barmore NE 23 221 10% 65%
+8 John Franklin-Myers DEN 21 207 10% 40%
+9 Osa Odighizuwa DAL 24 239 10% 62%
+10 Arik Armstead JAX 25 251 10% 58%
+11 Moro Ojomo PHI 24 241 10% 59%
+12 Karl Brooks GB 20 203 10% 55%
+13 Zach Allen DEN 30 306 10% 56%
+14 Braden Fiske LAR 19 194 10% 73%
+15 Keeanu Benton PIT 23 246 9% 56%
+16 Byron Murphy II SEA 27 289 9% 60%
+17 David Onyemata ATL 17 185 9% 63%
+18 Jalen Carter PHI 18 214 8% 60%
+19 Dexter Lawrence II NYG 21 251 8% 71%
+20 Kenny Clark DAL 19 228 8% 65%
+20 Mason Graham CLE 20 240 8% 57%
+
+OT Pass Block Win Rate Rankings
+RANK NAME TEAM WINS PLAYS PBWR TDT%
+1 Dion Dawkins BUF 326 340 96% 32%
+2 Roger Rosengarten BAL 303 317 96% 30%
+3 Tristan Wirfs TB 255 267 96% 32%
+4 Darnell Wright CHI 375 394 95% 32%
+5 Ronnie Stanley BAL 249 262 95% 40%
+6 Zach Tom GB 202 213 95% 33%
+7 Jawaan Taylor KC 247 261 95% 26%
+8 Andrew Thomas NYG 238 252 94% 28%
+9 Garett Bolles DEN 393 418 94% 36%
+10 Spencer Brown BUF 280 298 94% 24%
+11 Rasheed Walker GB 316 337 94% 35%
+12 Warren McClendon Jr. LAR 239 255 94% 35%
+13 Charles Cross SEA 235 251 94% 36%
+14 Mike McGlinchey DEN 388 418 93% 38%
+15 Brian O'Neill MIN 266 287 93% 38%
+16 Jake Matthews ATL 341 368 93% 36%
+17 Troy Fautanu PIT 273 295 93% 30%
+18 Alaric Jackson LAR 344 372 92% 35%
+19 Taylor Moton CAR 286 310 92% 31%
+20 Trent Williams SF 332 360 92% 34%
+IOL Pass Block Win Rate Rankings
+RANK NAME TEAM WINS PLAYS PBWR GCDTR
+1 Creed Humphrey KC 391 397 98% 81%
+2 Joe Thuney CHI 408 418 98% 69%
+3 Isaac Seumalo PIT 213 219 97% 64%
+4 Tyler Linderbaum BAL 308 317 97% 74%
+5 Connor McGovern BUF 342 352 97% 77%
+6 Joel Bitonio CLE 400 415 96% 64%
+7 Peter Skoronski TEN 385 401 96% 67%
+8 Drew Dalman CHI 406 423 96% 83%
+9 Aaron Brewer MIA 261 272 96% 75%
+10 Mike Jordan TB 252 263 96% 65%
+11 Zach Frazier PIT 270 282 96% 76%
+12 Jonah Jackson CHI 404 422 96% 65%
+13 Josh Myers NYJ 370 387 96% 82%
+14 Quenton Nelson IND 336 352 95% 63%
+15 Ryan Neuzil ATL 351 368 95% 80%
+16 Chris Paul WAS 288 302 95% 64%
+17 Jake Brendel SF 345 362 95% 85%
+18 Luke Fortner NO 241 253 95% 85%
+19 Dylan Parham LV 318 334 95% 75%
+20 Mike Onwenu NE 394 414 95% 74%
+
+Edge Run Stop Win Rate Rankings
+RANK NAME TEAM WINS PLAYS RSWR EDGE%
+1 Maxx Crosby LV 125 319 39% 21%
+2 Jared Verse LAR 81 233 35% 19%
+3 Byron Young LAR 75 235 32% 18%
+4 Yaya Diaby TB 62 199 31% 14%
+5 Tuli Tuipulotu LAC 58 190 31% 11%
+6 Cameron Jordan NO 57 190 30% 7%
+7 Will McDonald IV NYJ 55 190 29% 16%
+8 Will Anderson Jr. HOU 50 177 28% 11%
+9 George Karlaftis KC 60 218 28% 15%
+10 Kwity Paye IND 55 201 27% 15%
+DT Run Stop Win Rate Rankings
+RANK NAME TEAM WINS PLAYS RSWRATE DT%
+1 Tommy Togiai HOU 84 184 46% 47%
+2 Quinnen Williams DAL 88 198 44% 43%
+3 D.J. Jones DEN 84 199 42% 38%
+4 Tyler Davis LAR 76 183 42% 39%
+5 Daron Payne WAS 80 194 41% 40%
+6 Jordan Davis PHI 115 282 41% 41%
+7 Malcolm Roach DEN 68 171 40% 46%
+8 Osa Odighizuwa DAL 87 223 39% 44%
+9 David Onyemata ATL 104 267 39% 39%
+10 Javon Kinlaw WAS 102 266 38% 41%
+
+OT Run Block Win Rate Rankings
+RANK NAME TEAM WINS PLAYS RBWR DT%
+1 Christian Darrisaw MIN 144 172 84% 35%
+2 Warren McClendon Jr. LAR 196 239 82% 44%
+3 Bernhard Raimann IND 293 361 81% 32%
+4 Theo Benedet CHI 172 213 81% 37%
+5 Alaric Jackson LAR 313 389 80% 41%
+6 Trent Williams SF 307 386 80% 33%
+7 Morgan Moses NE 293 369 79% 40%
+8 Orlando Brown Jr. CIN 275 347 79% 40%
+9 Armand Membou NYJ 299 378 79% 40%
+10 Brian O'Neill MIN 214 272 79% 33%
+IOL Run Block Win Rate Rankings
+RANK NAME TEAM WINS PLAYS RBWR DT%
+1 Grey Zabel SEA 371 447 83% 34%
+2 Zion Johnson LAC 298 376 79% 31%
+3 Joe Thuney CHI 327 424 77% 52%
+4 Isaac Seumalo PIT 213 277 77% 49%
+5 Donovan Jackson MIN 236 307 77% 55%
+6 Isaiah Adams ARI 163 214 76% 45%
+7 Quinn Meinerz DEN 281 371 76% 53%
+8 Tyler Booker DAL 251 334 75% 56%
+9 Alex Palczewski DEN 154 205 75% 49%
+10 David Edwards BUF 309 412 75% 36%
+
+NFL Team Win Rate Rankings
+TEAM PRWR RSWR PBWR RBWR
+Arizona Cardinals 39% (13) 30% (12) 63% (21) 71% (15)
+Atlanta Falcons 41% (6) 31% (9) 64% (14) 70% (30)
+Baltimore Ravens 30% (28) 30% (14) 69% (7) 71% (17)
+Buffalo Bills 31% (27) 30% (22) 71% (4) 75% (1)
+Carolina Panthers 34% (24) 26% (32) 59% (23) 70% (28)
+Chicago Bears 29% (31) 29% (26) 74% (1) 74% (5)
+Cincinnati Bengals 29% (32) 29% (23) 58% (28) 72% (10)
+Cleveland Browns 46% (2) 34% (2) 63% (20) 70% (24)
+Dallas Cowboys 40% (9) 32% (5) 63% (19) 72% (11)
+Denver Broncos 45% (3) 32% (4) 68% (8) 74% (4)
+Detroit Lions 32% (26) 28% (29) 56% (31) 71% (20)
+Green Bay Packers 39% (12) 29% (24) 69% (6) 71% (19)
+Houston Texans 35% (21) 32% (6) 56% (30) 68% (32)
+Indianapolis Colts 29% (30) 29% (25) 58% (27) 73% (7)
+Jacksonville Jaguars 38% (14) 28% (31) 68% (9) 73% (6)
+Kansas City Chiefs 40% (10) 28% (30) 71% (2) 70% (25)
+Las Vegas Raiders 37% (17) 30% (15) 61% (22) 70% (22)
+Los Angeles Chargers 37% (16) 30% (18) 54% (32) 69% (31)
+Los Angeles Rams 40% (8) 34% (1) 69% (5) 74% (2)
+Miami Dolphins 34% (23) 30% (21) 59% (24) 70% (29)
+Minnesota Vikings 46% (1) 30% (20) 59% (25) 74% (3)
+New England Patriots 35% (19) 31% (10) 64% (13) 72% (12)
+New Orleans Saints 35% (22) 31% (8) 56% (29) 70% (23)
+New York Giants 41% (5) 28% (28) 65% (11) 71% (18)
+New York Jets 33% (25) 30% (13) 58% (26) 71% (14)
+Philadelphia Eagles 35% (20) 30% (17) 64% (17) 71% (16)
+Pittsburgh Steelers 41% (4) 29% (27) 71% (3) 72% (9)
+San Francisco 49ers 29% (29) 31% (11) 67% (10) 72% (13)
+Seattle Seahawks 41% (7) 32% (3) 65% (12) 73% (8)
+Tampa Bay Buccaneers 40% (11) 30% (19) 64% (15) 70% (27)
+Tennessee Titans 37% (15) 30% (16) 64% (16) 70% (26)
+Washington Commanders 36% (18) 31% (7) 63% (18) 70% (21)
