@@ -1,0 +1,472 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Walters &#8212; week board</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600&family=Fraunces:opsz,wght@9..144,400;9..144,600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#EDEFEA; --ink:#131A17; --muted:#66736C; --rule:#D3D8D1; --rule2:#E2E5DF;
+  --gain:#14614A; --loss:#9C3A2E; --slate:#2E3A44; --wash:#E4E8E1;
+  --sans:"Archivo",system-ui,sans-serif; --serif:"Fraunces",Georgia,serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);
+  font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased}
+body{padding:0 0 96px}
+.wrap{max-width:860px;margin:0 auto;padding:0 20px}
+.num{font-variant-numeric:tabular-nums lining-nums}
+a{color:inherit}
+header.top{padding:28px 0 0}
+.eyebrow{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;
+  font-size:13px;color:var(--muted)}
+.eyebrow b{font-weight:600;color:var(--ink)}
+.verdict{font-family:var(--serif);font-weight:600;font-size:clamp(26px,4.6vw,40px);
+  line-height:1.18;letter-spacing:-.015em;margin:14px 0 4px;max-width:22ch}
+.verdict .quiet{color:var(--muted);font-weight:400}
+.sub{color:var(--muted);font-size:15px;max-width:62ch;margin:0 0 22px}
+.trust{display:grid;grid-template-columns:repeat(3,1fr);gap:2px;background:var(--rule2);
+  border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.trust div{background:var(--paper);padding:14px 14px 15px}
+.trust .k{font-size:12.5px;color:var(--muted)}
+.trust .v{font-family:var(--serif);font-size:24px;font-weight:600;line-height:1.1;margin-top:3px}
+.trust .n{font-size:12.5px;color:var(--muted);margin-top:2px}
+nav.tabs{display:flex;gap:22px;margin:22px 0 6px;border-bottom:1px solid var(--rule)}
+nav.tabs button{appearance:none;background:none;border:0;padding:0 0 10px;margin:0;cursor:pointer;
+  font-family:var(--sans);font-size:15px;color:var(--muted);border-bottom:2px solid transparent}
+nav.tabs button[aria-selected=true]{color:var(--ink);font-weight:600;border-bottom-color:var(--ink)}
+nav.tabs button:focus-visible{outline:2px solid var(--slate);outline-offset:3px}
+.legend{display:none}
+@media (min-width:721px){.legend{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);
+  margin:18px 0 -14px;padding-left:calc(190px + 18px);padding-right:122px}}
+h2.group{font-family:var(--sans);font-weight:500;font-size:14px;color:var(--muted);
+  margin:26px 0 2px;padding-bottom:8px}
+.game{border-top:1px solid var(--rule2);padding:16px 0 18px}
+.game:first-of-type{border-top:1px solid var(--rule)}
+.game.flag{margin-left:-14px;padding-left:12px;border-left:2px solid var(--ink)}
+.grow{display:grid;grid-template-columns:minmax(190px,1.1fr) minmax(220px,1.6fr) auto;
+  gap:18px;align-items:center}
+.teams{font-size:17px;line-height:1.32}
+.teams .at{color:var(--muted);font-size:14px}
+.when{color:var(--muted);font-size:13px;margin-top:5px}
+.axis{position:relative;height:42px}
+.track{position:absolute;left:0;right:0;top:19px;height:1px;background:var(--rule)}
+.zero{position:absolute;left:50%;top:12px;height:15px;width:1px;background:var(--rule)}
+.span{position:absolute;top:17px;height:5px;border-radius:3px;opacity:.9;
+  transform-origin:left center}
+.span{background:var(--ink);opacity:.75}
+.tick{position:absolute;top:13px;width:13px;height:13px;border-radius:50%;transform:translateX(-50%)}
+.tick.mkt{background:var(--slate)}
+.tick.ours{background:var(--paper);border:2.5px solid var(--ink)}
+.lbl{position:absolute;top:26px;transform:translateX(-50%);font-size:12.5px;white-space:nowrap}
+.lbl.mkt{color:var(--slate)} .lbl.ours{color:var(--ink);font-weight:600}
+.gapv{position:absolute;top:-2px;transform:translateX(-50%);font-family:var(--serif);
+  font-size:15px;font-weight:600;white-space:nowrap}
+.gapv{color:var(--ink)}
+.right{text-align:right;min-width:104px}
+.stars{font-family:var(--serif);font-size:22px;font-weight:600;line-height:1}
+.stars small{font-size:13px;font-weight:400;color:var(--muted)}
+.chip{display:inline-block;margin-top:7px;font-size:12.5px;padding:3px 9px;border-radius:2px;
+  border:1px solid var(--rule);color:var(--muted);background:var(--paper)}
+.chip.bet{border-color:var(--gain);color:#fff;background:var(--gain);font-weight:600}
+.chip.wait{border-color:var(--rule)}
+.more{appearance:none;background:none;border:0;padding:8px 0 0;margin:0;cursor:pointer;
+  font-family:var(--sans);font-size:13.5px;color:var(--muted);text-decoration:underline;
+  text-underline-offset:3px;text-decoration-color:var(--rule)}
+.more:hover{color:var(--ink)}
+.detail{margin-top:14px;padding:16px 16px 18px;background:var(--wash);border-radius:3px;font-size:14.5px}
+.detail h3{font-family:var(--sans);font-size:13px;font-weight:600;color:var(--muted);
+  margin:0 0 8px;letter-spacing:0}
+.detail h3+*{margin-top:0}
+.dcols{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.line{display:flex;justify-content:space-between;gap:14px;padding:3px 0;border-bottom:1px solid var(--rule2)}
+.line:last-child{border-bottom:0}
+.line span:last-child{font-variant-numeric:tabular-nums;white-space:nowrap}
+.read{margin-top:16px;padding-top:14px;border-top:1px solid var(--rule)}
+.read p{margin:6px 0 0;max-width:70ch}
+.read .risks{color:var(--muted);font-size:13.5px}
+.pills{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+.pill{appearance:none;font-family:var(--sans);font-size:11.5px;padding:3px 7px;border-radius:2px;
+  border:1px solid var(--rule);background:var(--paper);color:var(--muted);cursor:pointer}
+.pill[aria-pressed=true]{background:var(--ink);color:var(--paper);border-color:var(--ink);font-weight:600}
+.whatif{margin-top:14px;padding-top:14px;border-top:1px solid var(--rule)}
+.whatif .res{font-family:var(--serif);font-size:18px;font-weight:600;margin-top:10px}
+table{width:100%;border-collapse:collapse;font-size:14.5px}
+th{text-align:left;font-weight:600;font-size:12.5px;color:var(--muted);padding:0 8px 8px 0;
+  border-bottom:1px solid var(--rule)}
+td{padding:9px 8px 9px 0;border-bottom:1px solid var(--rule2);font-variant-numeric:tabular-nums}
+td.name{font-variant-numeric:normal}
+.bar{height:6px;background:var(--rule2);position:relative;border-radius:3px;min-width:90px}
+.bar i{position:absolute;top:0;bottom:0;border-radius:3px;background:var(--slate)}
+.pos{color:var(--gain)} .neg{color:var(--loss)}
+.empty{padding:42px 0;color:var(--muted);max-width:52ch}
+.foot{margin-top:34px;padding-top:16px;border-top:1px solid var(--rule);font-size:12.5px;color:var(--muted)}
+@media (max-width:720px){
+  .grow{grid-template-columns:1fr;gap:10px}
+  .right{text-align:left;display:flex;align-items:center;gap:12px}
+  .stars{font-size:19px} .chip{margin-top:0}
+  .dcols{grid-template-columns:1fr;gap:14px}
+  .trust{grid-template-columns:1fr;gap:0;background:var(--paper)}
+  .trust div{display:grid;grid-template-columns:1fr auto;align-items:baseline;gap:12px;
+    padding:9px 0;border-bottom:1px solid var(--rule2)}
+  .trust div:last-child{border-bottom:0}
+  .trust .k{font-size:13.5px}
+  .trust .v{font-size:18px;margin-top:0;text-align:right}
+  .trust .n{grid-column:1/-1;font-size:12px;margin-top:-1px}
+  .verdict{font-size:27px;margin:10px 0 4px}
+  .sub{margin-bottom:16px}
+  .game{padding:14px 0 16px}
+  .axis{height:46px}
+}
+@media (prefers-reduced-motion:no-preference){
+  .span{animation:grow .5s cubic-bezier(.2,.7,.3,1) both}
+  @keyframes grow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="eyebrow"><div id="wk">Loading</div><div id="fresh"></div></div>
+    <h1 class="verdict" id="verdict"></h1>
+    <p class="sub" id="sub"></p>
+  </header>
+  <section class="trust" id="trust"></section>
+  <nav class="tabs" role="tablist" id="tabs"></nav>
+  <main id="view"></main>
+  <div class="foot" id="foot"></div>
+</div>
+<script src="engine.js"></script>
+<script>
+"use strict";
+var D={}, TAB="week", OPEN={}, WEEKJSON=null, WHATIF={};
+
+function j(f){return fetch("data/"+f+"?t="+Date.now()).then(function(r){return r.ok?r.json():null;}).catch(function(){return null;});}
+function num(v,d){return (v>0?"+":"")+(+v).toFixed(d===undefined?1:d);}
+function ab(t){return (typeof ABBR!=="undefined"&&ABBR[t])||t;}
+function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
+function kick(g){
+  var d=new Date(g.gameday+"T"+(g.gametime||"13:00")+":00-04:00");
+  var day=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][d.getDay()];
+  var h=d.getHours(),m=d.getMinutes();
+  return day+" "+((h%12)||12)+(m?":"+String(m).padStart(2,"0"):"")+(h<12?"am":"pm");
+}
+function ago(iso){
+  if(!iso)return "";
+  var s=(Date.now()-new Date(iso).getTime())/1000;
+  if(s<3600)return Math.max(1,Math.round(s/60))+" min ago";
+  if(s<86400)return Math.round(s/3600)+"h ago";
+  return Math.round(s/86400)+"d ago";
+}
+/* graded results, computed from the pipeline's history */
+function record(){
+  var h=(D.history&&D.history.weeks)||[], mw=0,ml=0,mp=0, aw=0,al=0, clv=[], games=[];
+  h.forEach(function(w){(w.games||[]).forEach(function(g){
+    games.push(g);
+    if(g.mechOutcome==="W")mw++;else if(g.mechOutcome==="L")ml++;else if(g.mechOutcome==="P")mp++;
+    if(g.clv!=null)clv.push(g.clv);
+    var rd=D.reads&&D.reads[g.key];
+    if(rd&&g.close!=null&&typeof betSideOf==="function"){
+      var side=betSideOf(rd.recommendation);
+      if(side){var o=gradeSide(g.margin,g.close,side);if(o==="W")aw++;else if(o==="L")al++;}
+    }
+  });});
+  var avg=clv.length?clv.reduce(function(a,b){return a+b;},0)/clv.length:null;
+  return {mw:mw,ml:ml,mp:mp,aw:aw,al:al,clv:avg,nclv:clv.length,games:games,weeks:h};
+}
+function signalWord(ic){
+  if(ic==null)return ["not measured yet","needs a graded week with closing lines"];
+  if(ic>=0.3)return ["informative","disagreement has predicted results"];
+  if(ic>=0.1)return ["weak","slight signal, keep sampling"];
+  return ["noise","disagreement has not predicted results"];
+}
+function head(){
+  var b=D.board, R=record();
+  if(!b){
+    document.getElementById("wk").textContent="No board yet";
+    document.getElementById("verdict").textContent="Nothing has been built for this week.";
+    document.getElementById("sub").textContent="The pipeline runs Tuesday at 9am ET and writes the board here. You can also start it by hand from the repository's Actions tab.";
+    document.getElementById("trust").innerHTML="";
+    return;
+  }
+  var flagged=b.games.filter(function(g){return g.stars>=1;});
+  var bets=[],pending=0;
+  flagged.forEach(function(g){
+    var rd=D.reads&&D.reads[g.key];
+    if(!rd){pending++;return;}
+    if(!/NO BET/i.test(rd.recommendation||""))bets.push(g);
+  });
+  document.getElementById("wk").innerHTML="<b>Week "+b.week+"</b> &#183; "+b.season;
+  var f=document.getElementById("fresh");
+  f.textContent="built "+ago(b.generated)+(b.games[0]&&b.games[0].marketSrc==="odds"?", live book prices":", reference lines");
+  var v,s;
+  if(bets.length){
+    v=(bets.length===1?"One game":bets.length+" games")+" clears the bar."; 
+    if(bets.length>1)v=bets.length+" games clear the bar.";
+    s="Model and market disagree on "+flagged.length+" of "+b.games.length+" games. "+
+      (bets.length===1?"One reads as information rather than drift.":bets.length+" read as information rather than drift.")+
+      " Check the number you can actually get before you fire.";
+  }else if(flagged.length){
+    v=flagged.length+" games sit far from the market.";
+    s=(pending?"Reads are still pending on "+pending+" of them. ":"None of the gaps trace to information \u2014 they come from the ratings, not from news. ")+
+      "Disagreement is not edge until the signal reading turns positive.";
+  }else{
+    v="Nothing worth a bet this week.";
+    s="No game is far enough from the market to flag. That is the normal state; the model is built to sit still.";
+  }
+  document.getElementById("verdict").textContent=v;
+  document.getElementById("sub").textContent=s;
+  var sw=signalWord(b.calib&&b.calib.ic);
+  var clvTxt=R.nclv?num(R.clv,2)+" pts":"\u2014";
+  var recTxt=(R.mw+R.ml)?R.mw+"\u2013"+R.ml+(R.mp?"\u2013"+R.mp:""):"\u2014";
+  document.getElementById("trust").innerHTML=
+    cell("Closing line value",clvTxt,R.nclv?"across "+R.nclv+" graded picks":"nothing graded yet")+
+    cell("Model picks against the spread",recTxt,(R.mw+R.ml)?winPct(R.mw,R.ml):"nothing graded yet")+
+    cell("Signal",sw[0],sw[1]);
+}
+function cell(k,v,n){return "<div><div class='k'>"+esc(k)+"</div><div class='v num'>"+esc(v)+"</div><div class='n'>"+esc(n)+"</div></div>";}
+function winPct(w,l){
+  var n=w+l; if(!n)return "";
+  var p=(w/n*100).toFixed(1)+"%";
+  if(typeof wilson==="function"&&n>=10){var ci=wilson(w,n);return p+", 95% range "+ci[0].toFixed(0)+"\u2013"+ci[1].toFixed(0)+"%";}
+  return p+" \u2014 too few to read";
+}
+/* the spread axis: where each number sits, and the gap between them */
+function axis(g){
+  var S=14, pos=function(v){return Math.max(3,Math.min(97,50+(v/S)*50));};
+  if(g.market==null)return "<div class='axis'><div class='track'></div><div class='lbl mkt' style='left:50%'>no market line</div></div>";
+  var pm=pos(g.market), po=pos(g.line), lo=Math.min(pm,po), w=Math.abs(pm-po);
+
+  return "<div class='axis'>"+
+    "<div class='track'></div><div class='zero'></div>"+
+    (w>0.6?"<div class='span' style='left:"+lo+"%;width:"+w+"%'></div>"+
+      "<div class='gapv num' style='left:"+(lo+w/2)+"%'>"+Math.abs(g.edge).toFixed(1)+"</div>":"")+
+    "<div class='tick mkt' style='left:"+pm+"%'></div>"+
+    "<div class='tick ours' style='left:"+po+"%'></div>"+
+    "<div class='lbl mkt num' style='left:"+pm+"%'>"+num(g.market)+"</div>"+
+    "<div class='lbl ours num' style='left:"+po+"%'>"+num(g.line)+"</div>"+
+  "</div>";
+}
+function verdictChip(g){
+  var rd=D.reads&&D.reads[g.key];
+  if(!rd)return g.stars>=1?"<span class='chip wait'>read pending</span>":"<span class='chip'>watching</span>";
+  if(/NO BET/i.test(rd.recommendation))return "<span class='chip'>no bet</span>";
+  var side=/HOME/i.test(rd.recommendation)?g.home:g.away;
+  return "<span class='chip bet'>take "+esc(ab(side))+"</span>";
+}
+function gameRow(g){
+  var open=OPEN[g.key];
+  return "<article class='game"+(g.stars>=1?" flag":"")+"'>"+
+    "<div class='grow'>"+
+      "<div><div class='teams'>"+esc(g.away)+"<br><span class='at'>at</span> "+esc(g.home)+
+        (g.neutral?" <span class='at'>(neutral)</span>":"")+"</div>"+
+        "<div class='when'>"+kick(g)+(g.marketOu!=null?", total "+g.marketOu:"")+"</div></div>"+
+      axis(g)+
+      "<div class='right'><div class='stars num'>"+(g.stars?g.stars.toFixed(1)+"<small>&#9733;</small>":"<small>no gap</small>")+"</div>"+
+        verdictChip(g)+"</div>"+
+    "</div>"+
+    "<button class='more' data-k='"+esc(g.key)+"'>"+(open?"Hide detail":"Show how this number was built")+"</button>"+
+    (open?detail(g):"")+
+  "</article>";
+}
+function injList(list,team){
+  if(!list||!list.length)return "<div class='line'><span>Everyone available</span><span></span></div>";
+  return list.map(function(d){
+    return "<div class='line'><span>"+esc(d.n)+" <span style='color:var(--muted)'>"+esc(d.p)+
+      (d.repl?", "+esc(d.repl)+" in":"")+"</span></span><span class='neg'>-"+d.loss.toFixed(2)+"</span></div>";
+  }).join("");
+}
+function detail(g){
+  var u=g.units||{}, lg=(D.board&&D.board.league_pressure_rate)||0.247;
+  var rd=D.reads&&D.reads[g.key];
+  var books=Object.keys(g.byBook||{});
+  var press=(u.home&&u.away)?
+    "<div class='line'><span>Pressure expected on "+esc(ab(g.home))+"'s quarterback</span><span>"+
+      Math.round((lg+(u.away.R||0)+(u.home.P||0))*100)+"%</span></div>"+
+    "<div class='line'><span>Pressure expected on "+esc(ab(g.away))+"'s quarterback</span><span>"+
+      Math.round((lg+(u.home.R||0)+(u.away.P||0))*100)+"%</span></div>"+
+    "<div class='line'><span>League average</span><span>"+Math.round(lg*100)+"%</span></div>":"";
+  return "<div class='detail'>"+
+    "<div class='dcols'>"+
+      "<div><h3>How the line was built</h3>"+
+        "<div class='line'><span>"+esc(ab(g.home))+" rating</span><span class='num'>"+num(g.hR,2)+"</span></div>"+
+        "<div class='line'><span>"+esc(ab(g.away))+" rating</span><span class='num'>"+num(g.aR,2)+"</span></div>"+
+        "<div class='line'><span>Home field</span><span class='num'>"+(g.neutral?"0 (neutral site)":num(g.hfa,2))+"</span></div>"+
+        "<div class='line'><span>Before injuries</span><span class='num'>"+num(g.base,2)+"</span></div>"+
+        (g.hInj?"<div class='line'><span>"+esc(ab(g.home))+" injuries</span><span class='neg num'>-"+g.hInj.toFixed(2)+"</span></div>":"")+
+        (g.aInj?"<div class='line'><span>"+esc(ab(g.away))+" injuries</span><span class='pos num'>+"+g.aInj.toFixed(2)+"</span></div>":"")+
+        "<div class='line'><span><b>Our line</b></span><span class='num'><b>"+num(g.line,2)+"</b></span></div>"+
+      "</div>"+
+      "<div><h3>Market</h3>"+
+        books.map(function(b){return "<div class='line'><span>"+esc(b)+"</span><span class='num'>"+num(g.byBook[b])+"</span></div>";}).join("")+
+        (g.open!=null?"<div class='line'><span>Opened</span><span class='num'>"+num(g.open)+"</span></div>":"")+
+        (g.close!=null?"<div class='line'><span>Closed</span><span class='num'>"+num(g.close)+"</span></div>":"")+
+        (g.modelOu!=null?"<div class='line'><span>Total: our model</span><span class='num'>"+g.modelOu+"</span></div>":"")+
+        (g.marketOu!=null?"<div class='line'><span>Total: market</span><span class='num'>"+g.marketOu+"</span></div>":"")+
+        (g.ouLean?"<div class='line'><span>Total lean</span><span>"+esc(g.ouLean.toLowerCase())+"</span></div>":"")+
+      "</div>"+
+    "</div>"+
+    (press?"<div style='margin-top:16px'><h3>Pass rush against protection</h3>"+press+
+      "<div class='n' style='color:var(--muted);font-size:12.5px;margin-top:6px'>Already inside both ratings \u2014 shown as context, not added to the line.</div></div>":"")+
+    "<div style='margin-top:16px'><div class='dcols'>"+
+      "<div><h3>"+esc(g.away)+" injuries</h3>"+injList(g.aInjuries)+"</div>"+
+      "<div><h3>"+esc(g.home)+" injuries</h3>"+injList(g.hInjuries)+"</div>"+
+    "</div></div>"+
+    whatIf(g)+
+    (rd?"<div class='read'><h3>Read from "+esc(rd.model||"the model")+", confidence "+esc(rd.confidence)+" of 5</h3>"+
+      "<p>"+esc(rd.read)+"</p><p class='risks'>What could make this wrong: "+esc(rd.risks)+"</p></div>":"")+
+  "</div>";
+}
+/* what-if: change a status, see the line move, using the same engine the pipeline uses */
+var STATUSES=["IN","Q15","Q30","Q55","OUT"];
+function whatIf(g){
+  if(!WEEKJSON)return "<div class='whatif'><button class='more' data-wi='"+esc(g.id)+"'>Try a different injury status</button></div>";
+  var w=WHATIF[g.id]||(WHATIF[g.id]=seedWhatIf(g));
+  var rows=function(team,side){
+    var ros=(WEEKJSON.rosters||{})[team]||[];
+    var names=Object.keys(w[side]);
+    if(!ros.length)return "<div class='line'><span>Roster not loaded</span><span></span></div>";
+    return names.map(function(n){
+      var pl=ros.filter(function(p){return p.n===n;})[0]||{p:"",ev:0,v:0};
+      return "<div style='padding:5px 0;border-bottom:1px solid var(--rule2)'>"+
+        "<div style='display:flex;justify-content:space-between;gap:10px'><span>"+esc(n)+
+        " <span style='color:var(--muted)'>"+esc(pl.p)+", worth "+(pl.ev!=null?pl.ev:pl.v).toFixed(2)+"</span></span></div>"+
+        "<div class='pills'>"+STATUSES.map(function(s){
+          return "<button class='pill' data-wi-set='"+esc(g.id)+"|"+esc(side)+"|"+esc(n)+"|"+s+"' aria-pressed='"+(w[side][n]===s)+"'>"+s+"</button>";
+        }).join("")+"</div></div>";
+    }).join("")+
+    "<div style='margin-top:8px'><input list='ros-"+esc(side)+"-"+esc(g.id)+"' data-wi-add='"+esc(g.id)+"|"+esc(side)+"' placeholder='Add a player from "+esc(ab(team))+"' style='width:100%;padding:7px 9px;border:1px solid var(--rule);border-radius:2px;background:var(--paper);font-family:var(--sans);font-size:13.5px'>"+
+    "<datalist id='ros-"+esc(side)+"-"+esc(g.id)+"'>"+ros.slice(0,300).map(function(p){return "<option value='"+esc(p.n)+"'>";}).join("")+"</datalist></div>";
+  };
+  var res=recalc(g,w);
+  return "<div class='whatif'><h3>What if a status changes</h3>"+
+    "<div class='dcols'>"+
+      "<div><div style='font-size:13px;color:var(--muted);margin-bottom:4px'>"+esc(g.away)+"</div>"+rows(g.away,"away")+"</div>"+
+      "<div><div style='font-size:13px;color:var(--muted);margin-bottom:4px'>"+esc(g.home)+"</div>"+rows(g.home,"home")+"</div>"+
+    "</div>"+
+    "<div class='res num'>Line becomes "+num(res.line,2)+
+      " <span style='font-weight:400;color:var(--muted);font-size:14px'>(was "+num(g.line,2)+
+      (g.market!=null?", market "+num(g.market):"")+")</span></div>"+
+    (res.stacked.length?"<div style='font-size:13px;color:var(--muted)'>Stacked losses in: "+esc(res.stacked.join(", "))+"</div>":"")+
+  "</div>";
+}
+function seedWhatIf(g){
+  var o={home:{},away:{}};
+  (g.hInjuries||[]).forEach(function(d){o.home[d.n]=d.st;});
+  (g.aInjuries||[]).forEach(function(d){o.away[d.n]=d.st;});
+  return o;
+}
+function recalc(g,w){
+  var hr=(WEEKJSON.rosters||{})[g.home]||[], ar=(WEEKJSON.rosters||{})[g.away]||[];
+  var qm=(D.board.calib&&D.board.calib.qbMult)||1;
+  var hd=calcInjuryDelta(hr,w.home,qm), ad=calcInjuryDelta(ar,w.away,qm);
+  return {line:parseFloat((g.base-hd.total+ad.total).toFixed(2)),
+          stacked:(hd.stacked||[]).concat(ad.stacked||[])};
+}
+function viewWeek(){
+  var b=D.board;
+  if(!b)return "<div class='empty'>Once the pipeline has run, every game for the week shows up here with our number, the market's number, and the distance between them.</div>";
+  var flag=b.games.filter(function(g){return g.stars>=1;});
+  var rest=b.games.filter(function(g){return g.stars<1;}).sort(function(x,y){
+    return (x.gameday+x.gametime).localeCompare(y.gameday+y.gametime);});
+  var h="";
+  h+="<div class='legend'><span>away team favored</span><span>pick&#8217;em</span><span>home team favored</span></div>";
+  if(flag.length)h+="<h2 class='group'>Far enough from the market to look at</h2>"+flag.map(gameRow).join("");
+  h+="<h2 class='group'>"+(flag.length?"Everything else, in kickoff order":"All games, in kickoff order")+"</h2>"+rest.map(gameRow).join("");
+  return h;
+}
+function viewRecord(){
+  var R=record(), c=D.calib||{};
+  if(!R.weeks.length)return "<div class='empty'>Nothing has been graded yet. Every Monday the pipeline pulls the finals, grades the model's picks, measures how the line moved against the number we had, and re-rates all 32 teams.</div>";
+  var rows=R.weeks.map(function(w){
+    var gw=w.games.filter(function(g){return g.mechOutcome==="W";}).length;
+    var gl=w.games.filter(function(g){return g.mechOutcome==="L";}).length;
+    var cl=w.games.filter(function(g){return g.clv!=null;}).map(function(g){return g.clv;});
+    var avg=cl.length?cl.reduce(function(a,b){return a+b;},0)/cl.length:null;
+    return "<tr><td class='name'>Week "+w.week+"</td><td>"+w.games.length+"</td><td>"+gw+"\u2013"+gl+
+      "</td><td class='"+(avg>0?"pos":avg<0?"neg":"")+"'>"+(avg==null?"\u2014":num(avg,2))+"</td></tr>";
+  }).join("");
+  var sw=signalWord(c.ic);
+  return "<h2 class='group'>Whether the number we take beats the number that closes</h2>"+
+    "<p class='sub'>This is the honest scoreboard. Win-loss takes a season to mean anything; closing line value shows up in weeks. If the market keeps moving toward the side we took, we are getting the better of the number.</p>"+
+    "<table><thead><tr><th>Week</th><th>Games</th><th>Model picks</th><th>Average line value</th></tr></thead><tbody>"+rows+"</tbody></table>"+
+    "<h2 class='group'>Accuracy</h2><table><tbody>"+
+      "<tr><td class='name'>Model picks against the spread</td><td>"+R.mw+"\u2013"+R.ml+(R.mp?"\u2013"+R.mp:"")+"</td><td class='name'>"+winPct(R.mw,R.ml)+"</td></tr>"+
+      ((R.aw+R.al)?"<tr><td class='name'>The written reads</td><td>"+R.aw+"\u2013"+R.al+"</td><td class='name'>"+winPct(R.aw,R.al)+"</td></tr>":"")+
+      "<tr><td class='name'>Break-even at standard juice</td><td>52.4%</td><td class='name'>what a bet has to clear</td></tr>"+
+    "</tbody></table>"+
+    "<h2 class='group'>What the results have taught the model</h2><table><tbody>"+
+      "<tr><td class='name'>Home field</td><td>"+(typeof hfaOf==="function"?hfaOf(c).toFixed(2):"2.00")+" pts</td><td class='name'>"+(c.nHfa?"from "+c.nHfa+" graded games, held near the 11-season value of 2.0":"book value until games are graded")+"</td></tr>"+
+      "<tr><td class='name'>Total scaling</td><td>"+(c.ouScalar||1)+"</td><td class='name'>"+(c.nOu?"from "+c.nOu+" games":"unadjusted")+"</td></tr>"+
+      "<tr><td class='name'>Quarterback weight</td><td>"+((c.nQb>=5?c.qbMult:1))+"x</td><td class='name'>"+(c.nQb>=5?"fitted to results":"book scale until 5 quarterback-injury games are graded")+"</td></tr>"+
+      "<tr><td class='name'>Signal</td><td>"+(c.ic==null?"\u2014":c.ic.toFixed(2))+"</td><td class='name'>"+sw[0]+", "+sw[1]+(c.nIc?" ("+c.nIc+" games)":"")+"</td></tr>"+
+    "</tbody></table>";
+}
+function viewRatings(){
+  var r=D.ratings&&D.ratings.ratings;
+  if(!r)return "<div class='empty'>Ratings appear once the pipeline has run.</div>";
+  var opening={};
+  if(typeof DEFAULT_RATINGS!=="undefined"){
+    Object.keys(DEFAULT_RATINGS).forEach(function(t){
+      var o=(typeof OPENING_2026!=="undefined"?OPENING_2026.filter(function(x){return x.t===t;})[0]:null);
+      opening[t]=DEFAULT_RATINGS[t]*OPENING_SHRINK+(o?o.d:0);
+    });
+  }
+  var list=Object.keys(r).sort(function(a,b){return r[b]-r[a];});
+  var max=Math.max.apply(null,list.map(function(t){return Math.abs(r[t]);}))||1;
+  return "<h2 class='group'>Where the 32 teams stand"+(D.ratings.asOfWeek?", after week "+D.ratings.asOfWeek:", opening values")+"</h2>"+
+    "<p class='sub'>A rating is how many points better than average a team is on a neutral field. Every Monday each team moves ten percent of the way toward how it just played, adjusted for who was hurt."+
+    (D.ratings.asOfWeek?"":" Nothing has moved yet \u2014 these are the opening numbers.")+"</p>"+
+    "<table><thead><tr><th>Team</th><th>Rating</th><th></th><th>Since opening</th></tr></thead><tbody>"+
+    list.map(function(t){
+      var v=r[t], d=opening[t]!=null?v-opening[t]:null;
+      var w=Math.abs(v)/max*50;
+      return "<tr><td class='name'>"+esc(t)+"</td><td>"+num(v,2)+"</td>"+
+        "<td><div class='bar'><i style='"+(v>=0?"left:50%;width:"+w+"%":"right:50%;width:"+w+"%")+"'></i></div></td>"+
+        "<td class='"+(d>0.05?"pos":d<-0.05?"neg":"")+"'>"+(d==null||Math.abs(d)<0.005?"\u2014":num(d,2))+"</td></tr>";
+    }).join("")+"</tbody></table>";
+}
+function render(){
+  head();
+  var tabs=[["week","This week"],["record","Record"],["ratings","Ratings"]];
+  document.getElementById("tabs").innerHTML=tabs.map(function(t){
+    return "<button role='tab' aria-selected='"+(TAB===t[0])+"' data-tab='"+t[0]+"'>"+t[1]+"</button>";}).join("");
+  document.getElementById("view").innerHTML=TAB==="week"?viewWeek():TAB==="record"?viewRecord():viewRatings();
+  var b=D.board;
+  document.getElementById("foot").innerHTML=b?
+    "Built automatically from the league's own data: schedule and depth charts, the injury report, play-by-play and charting, plus book prices. "+
+    "Rosters as of "+esc((b.sources&&b.sources.depth_chart||"").slice(0,10))+", player values from "+esc(b.sources&&b.sources.players||"\u2014")+
+    ", injuries: "+esc(b.sources&&b.sources.injuries||"\u2014")+". Runs Tuesday, again each evening, Sunday morning for closing prices, and Monday to grade.":"";
+}
+document.addEventListener("click",function(e){
+  var t=e.target.closest("[data-tab]");
+  if(t){TAB=t.getAttribute("data-tab");render();window.scrollTo({top:0,behavior:"instant"});return;}
+  var m=e.target.closest("[data-k]");
+  if(m){var k=m.getAttribute("data-k");OPEN[k]=!OPEN[k];render();
+    var el=document.querySelector("[data-k='"+k.replace(/'/g,"")+"']");if(el&&OPEN[k])el.scrollIntoView({block:"center",behavior:"smooth"});return;}
+  var wi=e.target.closest("[data-wi]");
+  if(wi){loadWeekJson().then(render);return;}
+  var st=e.target.closest("[data-wi-set]");
+  if(st){var p=st.getAttribute("data-wi-set").split("|");
+    if(WHATIF[p[0]]){WHATIF[p[0]][p[1]][p[2]]=p[3];render();}return;}
+});
+document.addEventListener("change",function(e){
+  var add=e.target.closest("[data-wi-add]");
+  if(add&&add.value){var p=add.getAttribute("data-wi-add").split("|");
+    if(WHATIF[p[0]]){WHATIF[p[0]][p[1]][add.value]="OUT";add.value="";render();}}
+});
+function loadWeekJson(){
+  if(WEEKJSON)return Promise.resolve();
+  return j("week.json").then(function(w){WEEKJSON=w||{rosters:{}};});
+}
+Promise.all([j("board.json"),j("reads.json"),j("history.json"),j("ratings.json"),j("calib.json")])
+.then(function(r){
+  D.board=r[0];D.reads=r[1]||{};D.history=r[2]||{weeks:[]};D.ratings=r[3];D.calib=r[4]||{};
+  render();
+});
+</script>
+</body>
+</html>

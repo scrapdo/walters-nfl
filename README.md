@@ -1,5 +1,12 @@
 # Walters NFL -- automated weekly pipeline
 
+**Site:** https://walters-nfl-analyzer.netlify.app -- the week board, built for you before you open it.
+`index.html` reads the JSON in `data/` and adds nothing of its own except a what-if: change any player's
+status and the line recomputes in the browser with the same engine the pipeline uses. `classic.html` is the
+old hands-on app (fetch rosters, analyze one game at a time) and needs your own API keys in its Settings tab.
+`engine.js` holds the model math and is the single source of truth -- the site loads it, and `pipeline/run.js`
+parses it, so the numbers on screen and the numbers in `data/board.json` cannot drift apart.
+
 Nothing manual in season. GitHub Actions runs the pipeline on a schedule and deploys the site.
 
 | when (ET)   | stage   | what happens |
