@@ -105,6 +105,16 @@ td.name{font-variant-numeric:normal}
 .bar{height:6px;background:var(--rule2);position:relative;border-radius:3px;min-width:90px}
 .bar i{position:absolute;top:0;bottom:0;border-radius:3px;background:var(--slate)}
 .pos{color:var(--gain)} .neg{color:var(--loss)}
+.about p{max-width:68ch;margin:10px 0;font-size:15px}
+.about .lede{font-size:16.5px}
+.about dl{display:grid;grid-template-columns:max-content 1fr;gap:8px 18px;margin:12px 0 0;
+  font-size:14.5px;max-width:74ch}
+.about dt{color:var(--muted);white-space:nowrap}
+.about dd{margin:0}
+.about .facts{border-left:2px solid var(--rule);padding-left:16px;margin:14px 0}
+.about .facts div{padding:5px 0;font-size:14.5px;max-width:68ch}
+@media (max-width:720px){.about dl{grid-template-columns:1fr;gap:2px 0}
+  .about dt{margin-top:10px;font-weight:600;color:var(--ink)}}
 .empty{padding:42px 0;color:var(--muted);max-width:52ch}
 .foot{margin-top:34px;padding-top:16px;border-top:1px solid var(--rule);font-size:12.5px;color:var(--muted)}
 @media (max-width:720px){
@@ -453,12 +463,57 @@ function viewRatings(){
         "<td class='"+(d>0.05?"pos":d<-0.05?"neg":"")+"'>"+(d==null||Math.abs(d)<0.005?"\u2014":num(d,2))+"</td></tr>";
     }).join("")+"</tbody></table>";
 }
+function viewAbout(){
+  return "<div class='about'>"+
+  "<h2 class='group'>How the number is built</h2>"+
+  "<p class='lede'>Every team carries a rating: how many points better than average it is on a neutral field. "+
+  "A game's line is the home rating, plus home field, minus the away rating, minus what each side's injuries cost.</p>"+
+  "<p>Injuries are priced the way Billy Walters priced them. A hurt player costs his value <i>net of whoever replaces him</i>, "+
+  "not his whole value, and when several players in the same unit are out at once the loss compounds \u2014 two receivers hurt "+
+  "together cost more than the two of them apart.</p>"+
+  "<p>Then the market's number sits next to ours. The distance between them is scored by walking every margin in between and "+
+  "adding up how often real games land on each one. Three and seven carry most of the weight; four and five carry almost none. "+
+  "That total is the star rating on the right of each row.</p>"+
+  "<h2 class='group'>What the settings were measured on</h2>"+
+  "<div class='facts'>"+
+    "<div>Home field is 2.0 points \u2014 the value with the lowest error across 2015\u20132025, and steady enough that a single season cannot move it.</div>"+
+    "<div>Ratings move ten percent of the way toward each week's result. Tested against every other weight over eleven seasons; ten percent won.</div>"+
+    "<div>Injury statuses come from 36,723 injury-report lines matched against who actually played. Doubtful is effectively out \u2014 those players play 1\u20132% of the time. "+
+    "Questionable costs 54% after a missed practice, 30% after a limited one, 15% after a full one, and 52% for a quarterback who was limited.</div>"+
+    "<div>The point values behind the star rating are the book's own table, unchanged.</div>"+
+  "</div>"+
+  "<h2 class='group'>What it cannot do</h2>"+
+  "<p>Eleven seasons of testing are blunt about this. Our line is less accurate than the closing line \u2014 average error 13.2 points against the market's 12.8. "+
+  "Star plays hit 51.1% where 52.4% is break-even. When we disagree with the market, the result leans very slightly toward the market, not us.</p>"+
+  "<p>The reason is not the method, it is the ingredients. Ratings built from public data are consensus-quality, and the edge Walters had came from numbers "+
+  "nobody else could see. So a star is a <b>disagreement</b>, not an edge. The totals model is weaker still: 48.6% across 1,007 leans, and it has never beaten "+
+  "a closing total. It is shown for context and never as a bet.</p>"+
+  "<p>What can be an edge is information \u2014 an injury or availability change the market has not priced yet. That is what the roster work and the evening "+
+  "runs are for, and it is the one thing worth acting on quickly.</p>"+
+  "<h2 class='group'>Using it through the week</h2>"+
+  "<dl>"+
+    "<dt>Tuesday morning</dt><dd>The board rebuilds from scratch: schedule, depth charts, player values, opening prices. Skim the flagged group and note which gaps have a reason behind them.</dd>"+
+    "<dt>Wednesday to Saturday</dt><dd>Injury reports post and the board updates each evening. If news breaks between runs, open the game and change the status yourself \u2014 the line recomputes in your browser with the same engine the pipeline uses.</dd>"+
+    "<dt>Before you bet</dt><dd>Open the game and read the market column. Books differ, and half a point is worth more than most edges you will find. Take the best number available, not the average.</dd>"+
+    "<dt>Sunday morning</dt><dd>Closing prices are captured for every game still pending, which is what makes the scoreboard work.</dd>"+
+    "<dt>Monday morning</dt><dd>Finals grade the picks, all 32 ratings move, and the calibration updates.</dd>"+
+  "</dl>"+
+  "<h2 class='group'>The test that actually matters</h2>"+
+  "<p>On the Record tab, watch closing line value before anything else. If the number you took keeps closing better than where you got it, you are beating "+
+  "the market, and that shows up within weeks. Win-loss takes a season or more to mean anything, because most of it is luck.</p>"+
+  "<p>Until closing line value is positive and the signal reading rises above noise, treat this board as a watchlist rather than a bet slip. "+
+  "That is not modesty, it is what the testing says.</p>"+
+  "<h2 class='group'>The older app</h2>"+
+  "<p>There is a hands-on version at <a href='classic.html'>classic.html</a> for working a single game from scratch: pull a full roster, set situational factors, "+
+  "run an analysis on demand. It needs your own keys, entered in its own settings. Everything here runs without you.</p>"+
+  "</div>";
+}
 function render(){
   head();
-  var tabs=[["week","This week"],["record","Record"],["ratings","Ratings"]];
+  var tabs=[["week","This week"],["record","Record"],["ratings","Ratings"],["about","How it works"]];
   document.getElementById("tabs").innerHTML=tabs.map(function(t){
     return "<button role='tab' aria-selected='"+(TAB===t[0])+"' data-tab='"+t[0]+"'>"+t[1]+"</button>";}).join("");
-  document.getElementById("view").innerHTML=TAB==="week"?viewWeek():TAB==="record"?viewRecord():viewRatings();
+  document.getElementById("view").innerHTML=TAB==="week"?viewWeek():TAB==="record"?viewRecord():TAB==="ratings"?viewRatings():viewAbout();
   var b=D.board;
   document.getElementById("foot").innerHTML=b?
     "Built automatically from the league's own data: schedule and depth charts, the injury report, play-by-play and charting, plus book prices. "+
