@@ -130,12 +130,22 @@ async function analyze(){
       'Model line (home-favored positive): '+g.line+' | Market: '+g.market+' ('+g.marketSrc+') | disagreement '+g.edge+' | stars '+g.stars+' ('+g.pct+'%)\n'+
       'O/U: model '+g.modelOu+' vs market '+g.marketOu+(g.ouLean?' -> '+g.ouLean:'')+'\n'+
       (g.units.home&&g.units.away?'Units: home rush R '+g.units.home.R+' protection P '+g.units.home.P+'; away rush R '+g.units.away.R+' protection P '+g.units.away.P+' (additive; already in ratings)\n':'')+
-      'Task: explain in 4-6 sentences what is driving the disagreement, whether it is information (injury/availability the market may not have priced) or noise (rating drift), and give recommendation as one of TAKE HOME / TAKE AWAY / NO BET with a confidence 1-5. Return ONLY JSON: {"recommendation":"...","confidence":n,"read":"...","ou_take":"OVER|UNDER|NO BET","risks":"..."}';
+      'Task: explain in 4-6 sentences what is driving the disagreement, whether it is information (injury/availability the market may not have priced) or noise (rating drift), and give a recommendation of TAKE HOME / TAKE AWAY / NO BET with confidence 1-5.\n'+
+      'Reply with a single JSON object and nothing else -- no preamble, no markdown fence:\n'+
+      '{"recommendation":"TAKE HOME|TAKE AWAY|NO BET","confidence":3,"read":"...","ou_take":"OVER|UNDER|NO BET","risks":"..."}';
     try{
-      const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'content-type':'application/json','x-api-key':k,'anthropic-version':'2023-06-01'},body:JSON.stringify({model:READ_MODEL,max_tokens:900,messages:[{role:'user',content:pr}]})});
-      const d=await r.json();if(d.error)throw new Error(d.error.message);
-      const txt=(d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');const m=txt.match(/\{[\s\S]*\}/);
-      reads[g.key]={...JSON.parse(m[0]),week:board.week,line:g.line,market:g.market,model:READ_MODEL,ts:new Date().toISOString()};
+      const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'content-type':'application/json','x-api-key':k,'anthropic-version':'2023-06-01'},body:JSON.stringify({model:READ_MODEL,max_tokens:2000,messages:[{role:'user',content:pr}]})});
+      const d=await r.json();
+      if(d.error)throw new Error((d.error.type||'')+' '+(d.error.message||JSON.stringify(d.error)));
+      const blocks=d.content||[];
+      const txt=blocks.map(b=>typeof b.text==='string'?b.text:'').join('\n').trim();
+      let m=txt.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);          // fenced JSON
+      if(!m)m=txt.match(/(\{[\s\S]*\})/);                                 // bare JSON
+      if(!m){
+        console.log('  no JSON in response for '+g.key+' | stop_reason='+d.stop_reason+' | blocks=['+blocks.map(b=>b.type).join(',')+'] | text[0,300]='+JSON.stringify(txt.slice(0,300)));
+        throw new Error('no JSON in response');
+      }
+      reads[g.key]={...JSON.parse(m[1]),week:board.week,line:g.line,market:g.market,model:READ_MODEL,ts:new Date().toISOString()};
       console.log('read: '+g.away+' @ '+g.home+' -> '+reads[g.key].recommendation+' ('+reads[g.key].confidence+')');
     }catch(e){console.log('read failed '+g.key+': '+e.message);}
   }
