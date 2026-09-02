@@ -66,6 +66,9 @@ h2.group{font-family:var(--sans);font-weight:500;font-size:14px;color:var(--mute
 .gapv{position:absolute;top:-2px;transform:translateX(-50%);font-family:var(--serif);
   font-size:15px;font-weight:600;white-space:nowrap}
 .gapv{color:var(--ink)}
+.totline{font-size:12.5px;color:var(--muted);text-align:center;margin-top:2px}
+.totline b{color:var(--ink);font-weight:600}
+.chip.ou{border-style:dashed;border-color:var(--slate);color:var(--slate);margin-left:6px}
 .right{text-align:right;min-width:104px}
 .stars{font-family:var(--serif);font-size:22px;font-weight:600;line-height:1}
 .stars small{font-size:13px;font-weight:400;color:var(--muted)}
@@ -163,11 +166,15 @@ function ago(iso){
 }
 /* graded results, computed from the pipeline's history */
 function record(){
-  var h=(D.history&&D.history.weeks)||[], mw=0,ml=0,mp=0, aw=0,al=0, clv=[], games=[];
+  var h=(D.history&&D.history.weeks)||[], mw=0,ml=0,mp=0, aw=0,al=0, ow=0,ol=0, clv=[], games=[];
   h.forEach(function(w){(w.games||[]).forEach(function(g){
     games.push(g);
     if(g.mechOutcome==="W")mw++;else if(g.mechOutcome==="L")ml++;else if(g.mechOutcome==="P")mp++;
     if(g.clv!=null)clv.push(g.clv);
+    if(g.ouLean&&g.marketOu!=null&&g.total!=null&&g.total!==g.marketOu){
+      var over=/OVER/i.test(g.ouLean);
+      if((g.total>g.marketOu)===over)ow++;else ol++;
+    }
     var rd=D.reads&&D.reads[g.key];
     if(rd&&g.close!=null&&typeof betSideOf==="function"){
       var side=betSideOf(rd.recommendation);
@@ -175,7 +182,7 @@ function record(){
     }
   });});
   var avg=clv.length?clv.reduce(function(a,b){return a+b;},0)/clv.length:null;
-  return {mw:mw,ml:ml,mp:mp,aw:aw,al:al,clv:avg,nclv:clv.length,games:games,weeks:h};
+  return {mw:mw,ml:ml,mp:mp,aw:aw,al:al,ow:ow,ol:ol,clv:avg,nclv:clv.length,games:games,weeks:h};
 }
 function signalWord(ic){
   if(ic==null)return ["not measured yet","needs a graded week with closing lines"];
@@ -192,9 +199,10 @@ function head(){
     document.getElementById("trust").innerHTML="";
     return;
   }
-  var flagged=b.games.filter(function(g){return g.stars>=1;});
+  var flag=b.games.filter(function(g){return g.stars>=1;});
+  var leans=b.games.filter(function(g){return !!g.ouLean;});
   var bets=[],pending=0;
-  flagged.forEach(function(g){
+  flag.forEach(function(g){
     var rd=D.reads&&D.reads[g.key];
     if(!rd){pending++;return;}
     if(!/NO BET/i.test(rd.recommendation||""))bets.push(g);
@@ -206,16 +214,19 @@ function head(){
   if(bets.length){
     v=(bets.length===1?"One game":bets.length+" games")+" clears the bar."; 
     if(bets.length>1)v=bets.length+" games clear the bar.";
-    s="Model and market disagree on "+flagged.length+" of "+b.games.length+" games. "+
+    s="Model and market disagree on "+flag.length+" of "+b.games.length+" games. "+
       (bets.length===1?"One reads as information rather than drift.":bets.length+" read as information rather than drift.")+
-      " Check the number you can actually get before you fire.";
-  }else if(flagged.length){
-    v=flagged.length+" games sit far from the market.";
+      " Check the number you can actually get before you fire."+
+      (leans.length?" The totals model also leans on "+leans.length+" game"+(leans.length>1?"s":"")+", though it has never beaten the closing total in testing.":"");
+  }else if(flag.length){
+    v=flag.length+" games sit far from the market.";
     s=(pending?"Reads are still pending on "+pending+" of them. ":"None of the gaps trace to information \u2014 they come from the ratings, not from news. ")+
       "Disagreement is not edge until the signal reading turns positive.";
+    if(leans.length)s+=" The totals model also leans on "+leans.length+" game"+(leans.length>1?"s":"")+", though it has never beaten the closing total in testing.";
   }else{
     v="Nothing worth a bet this week.";
-    s="No game is far enough from the market to flag. That is the normal state; the model is built to sit still.";
+    s="No game is far enough from the market to flag. That is the normal state; the model is built to sit still."+
+      (leans.length?" The totals model leans on "+leans.length+" game"+(leans.length>1?"s":"")+", but it has never beaten the closing total in testing.":"");
   }
   document.getElementById("verdict").textContent=v;
   document.getElementById("sub").textContent=s;
@@ -257,16 +268,23 @@ function verdictChip(g){
   var side=/HOME/i.test(rd.recommendation)?g.home:g.away;
   return "<span class='chip bet'>take "+esc(ab(side))+"</span>";
 }
+function flagged(g){return g.stars>=1||!!g.ouLean;}
+function totalsLine(g){
+  if(g.marketOu==null&&g.modelOu==null)return "";
+  var t="market total "+(g.marketOu!=null?g.marketOu:"\u2014")+(g.modelOu!=null?", our model "+g.modelOu:"");
+  if(g.ouLean)t+=" \u2014 <b>"+esc(g.ouLean.toLowerCase())+" by "+Math.abs(g.ouEdge)+"</b>";
+  return "<div class='totline num'>"+t+"</div>";
+}
 function gameRow(g){
   var open=OPEN[g.key];
-  return "<article class='game"+(g.stars>=1?" flag":"")+"'>"+
+  return "<article class='game"+(flagged(g)?" flag":"")+"'>"+
     "<div class='grow'>"+
       "<div><div class='teams'>"+esc(g.away)+"<br><span class='at'>at</span> "+esc(g.home)+
         (g.neutral?" <span class='at'>(neutral)</span>":"")+"</div>"+
-        "<div class='when'>"+kick(g)+(g.marketOu!=null?", total "+g.marketOu:"")+"</div></div>"+
-      axis(g)+
-      "<div class='right'><div class='stars num'>"+(g.stars?g.stars.toFixed(1)+"<small>&#9733;</small>":"<small>no gap</small>")+"</div>"+
-        verdictChip(g)+"</div>"+
+        "<div class='when'>"+kick(g)+"</div></div>"+
+      "<div>"+axis(g)+totalsLine(g)+"</div>"+
+      "<div class='right'><div class='stars num'>"+(g.stars?g.stars.toFixed(1)+"<small>&#9733;</small>":"<small style='color:var(--muted)'>under 0.5&#9733;</small>")+"</div>"+
+        verdictChip(g)+(g.ouLean?"<span class='chip ou'>"+esc(g.ouLean.toLowerCase().replace("strong ","strong "))+"</span>":"")+"</div>"+
     "</div>"+
     "<button class='more' data-k='"+esc(g.key)+"'>"+(open?"Hide detail":"Show how this number was built")+"</button>"+
     (open?detail(g):"")+
@@ -306,7 +324,8 @@ function detail(g){
         (g.close!=null?"<div class='line'><span>Closed</span><span class='num'>"+num(g.close)+"</span></div>":"")+
         (g.modelOu!=null?"<div class='line'><span>Total: our model</span><span class='num'>"+g.modelOu+"</span></div>":"")+
         (g.marketOu!=null?"<div class='line'><span>Total: market</span><span class='num'>"+g.marketOu+"</span></div>":"")+
-        (g.ouLean?"<div class='line'><span>Total lean</span><span>"+esc(g.ouLean.toLowerCase())+"</span></div>":"")+
+        (g.ouLean?"<div class='line'><span>Total lean</span><span>"+esc(g.ouLean.toLowerCase())+" by "+Math.abs(g.ouEdge)+"</span></div>"+
+          "<div style='font-size:12.5px;color:var(--muted);margin-top:6px;max-width:44ch'>The totals model went 48.6% on 1,007 leans across 2015\u20132025 and never beat the closing total. Read this as context, not a bet.</div>":"")+
       "</div>"+
     "</div>"+
     (press?"<div style='margin-top:16px'><h3>Pass rush against protection</h3>"+press+
@@ -369,12 +388,12 @@ function recalc(g,w){
 function viewWeek(){
   var b=D.board;
   if(!b)return "<div class='empty'>Once the pipeline has run, every game for the week shows up here with our number, the market's number, and the distance between them.</div>";
-  var flag=b.games.filter(function(g){return g.stars>=1;});
-  var rest=b.games.filter(function(g){return g.stars<1;}).sort(function(x,y){
+  var flag=b.games.filter(flagged);
+  var rest=b.games.filter(function(g){return !flagged(g);}).sort(function(x,y){
     return (x.gameday+x.gametime).localeCompare(y.gameday+y.gametime);});
   var h="";
   h+="<div class='legend'><span>away team favored</span><span>pick&#8217;em</span><span>home team favored</span></div>";
-  if(flag.length)h+="<h2 class='group'>Far enough from the market to look at</h2>"+flag.map(gameRow).join("");
+  if(flag.length)h+="<h2 class='group'>Far enough from the market to look at \u2014 spread, total, or both</h2>"+flag.map(gameRow).join("");
   h+="<h2 class='group'>"+(flag.length?"Everything else, in kickoff order":"All games, in kickoff order")+"</h2>"+rest.map(gameRow).join("");
   return h;
 }
@@ -396,6 +415,8 @@ function viewRecord(){
     "<h2 class='group'>Accuracy</h2><table><tbody>"+
       "<tr><td class='name'>Model picks against the spread</td><td>"+R.mw+"\u2013"+R.ml+(R.mp?"\u2013"+R.mp:"")+"</td><td class='name'>"+winPct(R.mw,R.ml)+"</td></tr>"+
       ((R.aw+R.al)?"<tr><td class='name'>The written reads</td><td>"+R.aw+"\u2013"+R.al+"</td><td class='name'>"+winPct(R.aw,R.al)+"</td></tr>":"")+
+      ((R.ow+R.ol)?"<tr><td class='name'>Totals leans</td><td>"+R.ow+"\u2013"+R.ol+"</td><td class='name'>"+winPct(R.ow,R.ol)+"</td></tr>":"")+
+      "<tr><td class='name'>Totals leans, 2015\u20132025 backtest</td><td>48.6%</td><td class='name'>1,007 leans, never beat the closing total \u2014 treat as a note, not a bet</td></tr>"+
       "<tr><td class='name'>Break-even at standard juice</td><td>52.4%</td><td class='name'>what a bet has to clear</td></tr>"+
     "</tbody></table>"+
     "<h2 class='group'>What the results have taught the model</h2><table><tbody>"+
