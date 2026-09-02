@@ -12,17 +12,15 @@ const wr=(f,o)=>fs.writeFileSync(D(f),JSON.stringify(o,null,0));
 const STAR_THRESHOLD=parseFloat(process.env.STAR_THRESHOLD||'1');
 const READ_MODEL=process.env.READ_MODEL||'claude-fable-5-1';
 
-// ---------- extract app functions from index.html (single source of truth) ----------
+// ---------- model engine (engine.js is the single source of truth, shared with the UI) ----------
 function app(){
-  const html=fs.readFileSync(path.join(ROOT,'index.html'),'utf8');
-  const s=html.indexOf('data-presets="react">')+21,e=html.indexOf('</script>',s);const code=html.slice(s,e);
-  const parser=require('@babel/parser');const ast=parser.parse(code,{sourceType:'script',plugins:['jsx']});
+  const code=fs.readFileSync(path.join(ROOT,'engine.js'),'utf8');
   const WANT=['DEFAULT_RATINGS','HOME_ADV','PV','calcStars','POS_GROUP','STACK_MULT','Q_PCT','calcInjuryDelta','OU_WX','OFF_GROUPS','splitInjury','calcModelTotal','CALIB_DEFAULT','CALIB_PRIOR_N','HIST_STARS','hfaOf','wilson','computeCalibration','gradeSide','tgpl','clvOf','clvOuOf','OPENING_2026','OPENING_SHRINK','QB_SEED','ABBR'];
-  const chunks=[];const found=new Set();
-  for(const node of ast.program.body){let names=[];if(node.type==='FunctionDeclaration')names=[node.id.name];else if(node.type==='VariableDeclaration')names=node.declarations.map(d=>d.id.name);
-    if(names.some(n=>WANT.includes(n))){chunks.push(code.slice(node.start,node.end));names.forEach(n=>found.add(n));}}
-  const missing=WANT.filter(w=>!found.has(w));if(missing.length)throw new Error('app functions missing: '+missing.join(','));
-  const ctx={console};vm.createContext(ctx);vm.runInContext(chunks.join('\n')+'\nthis.__x={'+WANT.join(',')+'};',ctx);return ctx.__x;
+  const ctx={console};vm.createContext(ctx);
+  vm.runInContext(code+'\nthis.__x={'+WANT.join(',')+'};',ctx);
+  const missing=WANT.filter(w=>ctx.__x[w]===undefined);
+  if(missing.length)throw new Error('engine.js missing: '+missing.join(','));
+  return ctx.__x;
 }
 const A=app();
 const key=(g)=>g.home+'|'+g.away;
