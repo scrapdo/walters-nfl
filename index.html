@@ -47,7 +47,7 @@ h2.group{font-family:var(--sans);font-weight:500;font-size:14px;color:var(--mute
 .game{border-top:1px solid var(--rule2);padding:16px 0 18px}
 .game:first-of-type{border-top:1px solid var(--rule)}
 .game.flag{margin-left:-14px;padding-left:12px;border-left:2px solid var(--ink)}
-.grow{display:grid;grid-template-columns:minmax(190px,1.1fr) minmax(220px,1.6fr) auto;
+.grow{display:grid;grid-template-columns:minmax(190px,1.1fr) minmax(220px,1.6fr) 168px;
   gap:18px;align-items:center}
 .teams{font-size:17px;line-height:1.32}
 .teams .at{color:var(--muted);font-size:14px}
@@ -69,7 +69,14 @@ h2.group{font-family:var(--sans);font-weight:500;font-size:14px;color:var(--mute
 .totline{font-size:12.5px;color:var(--muted);text-align:center;margin-top:2px}
 .totline b{color:var(--ink);font-weight:600}
 .chip.ou{border-style:dashed;border-color:var(--slate);color:var(--slate);margin-left:6px}
-.right{text-align:right;min-width:104px}
+.right{text-align:right;min-width:168px}
+.callv{font-family:var(--serif);font-size:19px;font-weight:600;line-height:1.15}
+.callv.bet{color:var(--gain)} .callv.none,.callv.pend{color:var(--muted)}
+.callr{font-size:12.5px;color:var(--muted);margin-top:3px;line-height:1.35}
+.heads{display:grid;grid-template-columns:minmax(190px,1.1fr) minmax(220px,1.6fr) 168px;gap:18px;
+  font-size:12px;color:var(--muted);margin:20px 0 -8px}
+.heads span:last-child{text-align:right}
+@media (max-width:720px){.heads{display:none}}
 .stars{font-family:var(--serif);font-size:22px;font-weight:600;line-height:1}
 .stars small{font-size:13px;font-weight:400;color:var(--muted)}
 .chip{display:inline-block;margin-top:7px;font-size:12.5px;padding:3px 9px;border-radius:2px;
@@ -119,8 +126,9 @@ td.name{font-variant-numeric:normal}
 .foot{margin-top:34px;padding-top:16px;border-top:1px solid var(--rule);font-size:12.5px;color:var(--muted)}
 @media (max-width:720px){
   .grow{grid-template-columns:1fr;gap:10px}
-  .right{text-align:left;display:flex;align-items:center;gap:12px}
-  .stars{font-size:19px} .chip{margin-top:0}
+  .right{text-align:left;padding-top:2px}
+  .callv{font-size:18px} .callr{display:inline}
+  .callr+.callr:before{content:" \2014 "}
   .dcols{grid-template-columns:1fr;gap:14px}
   .trust{grid-template-columns:1fr;gap:0;background:var(--paper)}
   .trust div{display:grid;grid-template-columns:1fr auto;align-items:baseline;gap:12px;
@@ -267,11 +275,11 @@ function axis(g){
       "<div class='gapv num' style='left:"+(lo+w/2)+"%'>"+Math.abs(g.edge).toFixed(1)+"</div>":"")+
     "<div class='tick mkt' style='left:"+pm+"%'></div>"+
     "<div class='tick ours' style='left:"+po+"%'></div>"+
-    (w<9
-      ? "<div class='lbl num' style='left:"+((pm+po)/2)+"%'><span class='mkt'>"+num(g.market)+
-        "</span> <span class='ours'>"+num(g.line)+"</span></div>"
-      : "<div class='lbl mkt num' style='left:"+pm+"%'>"+num(g.market)+"</div>"+
-        "<div class='lbl ours num' style='left:"+po+"%'>"+num(g.line)+"</div>")+
+    (w<12
+      ? "<div class='lbl num' style='left:50%'><span class='mkt'>market "+favStr(g.market,g)+
+        "</span> <span class='ours'>ours "+favStr(g.line,g)+"</span></div>"
+      : "<div class='lbl mkt num' style='left:"+pm+"%'>"+favStr(g.market,g)+"</div>"+
+        "<div class='lbl ours num' style='left:"+po+"%'>"+favStr(g.line,g)+"</div>")+
   "</div>";
 }
 function verdictChip(g){
@@ -281,11 +289,41 @@ function verdictChip(g){
   var side=/HOME/i.test(rd.recommendation)?g.home:g.away;
   return "<span class='chip bet'>take "+esc(ab(side))+"</span>";
 }
+
+/* the model works in home-margin (positive = home favored); people read spreads as "TEAM -3.5" */
+function sp(x){var v=Math.round(x*10)/10;return v>0?"+"+v:v<0?""+v:"PK";}
+function favStr(m,g){
+  if(m==null)return "\u2014";
+  if(Math.abs(m)<0.05)return "pick\u2019em";
+  return ab(m>0?g.home:g.away)+" "+sp(-Math.abs(m));
+}
+function sideSpread(g,side){
+  var vals=Object.keys(g.byBook||{}).map(function(k){return {b:k,v:g.byBook[k]};});
+  if(!vals.length&&g.market!=null)vals=[{b:null,v:g.market}];
+  if(!vals.length)return null;
+  var best=vals[0];
+  vals.forEach(function(x){ if(side==="away"?x.v>best.v:x.v<best.v)best=x; });
+  return {num:side==="away"?best.v:-best.v,book:best.b};
+}
+function callFor(g){
+  var rd=D.reads&&D.reads[g.key];
+  if(rd&&!/NO BET/i.test(rd.recommendation||"")){
+    var side=/HOME/i.test(rd.recommendation)?"home":"away";
+    var team=side==="home"?g.home:g.away, best=sideSpread(g,side);
+    return {cls:"bet",big:"Take "+ab(team)+(best?" "+sp(best.num):""),
+      sub:(best&&best.book?"best price at "+best.book+", ":"")+"confidence "+rd.confidence+" of 5"};
+  }
+  if(rd)return {cls:"none",big:"No bet",
+    sub:(g.hInj||g.aInj)?"the gap is not explained by the injuries":"nothing in the news behind the gap"};
+  if(g.stars>=1)return {cls:"pend",big:"Read pending",sub:"flagged, not yet analysed"};
+  if(g.ouLean)return {cls:"none",big:"Total only",sub:"spread is close to the market"};
+  return {cls:"none",big:"No play",sub:""};
+}
 function flagged(g){return g.stars>=1||!!g.ouLean;}
 function totalsLine(g){
   if(g.marketOu==null&&g.modelOu==null)return "";
-  var t="market total "+(g.marketOu!=null?g.marketOu:"\u2014")+(g.modelOu!=null?", our model "+g.modelOu:"");
-  if(g.ouLean)t+=" \u2014 <b>"+esc(g.ouLean.toLowerCase())+" by "+Math.abs(g.ouEdge)+"</b>";
+  var t="total "+(g.marketOu!=null?g.marketOu:"\u2014")+(g.modelOu!=null?", we make it "+g.modelOu:"");
+  if(g.ouLean)t+=" \u2014 <b>model leans "+esc(g.ouLean.toLowerCase().replace("strong ",""))+" "+g.marketOu+"</b>";
   return "<div class='totline num'>"+t+"</div>";
 }
 function gameRow(g){
@@ -296,8 +334,10 @@ function gameRow(g){
         (g.neutral?" <span class='at'>(neutral)</span>":"")+"</div>"+
         "<div class='when'>"+kick(g)+"</div></div>"+
       "<div>"+axis(g)+totalsLine(g)+"</div>"+
-      "<div class='right'><div class='stars num'>"+(g.stars?g.stars.toFixed(1)+"<small>&#9733;</small>":"<small style='color:var(--muted)'>under 0.5&#9733;</small>")+"</div>"+
-        verdictChip(g)+(g.ouLean?"<span class='chip ou'>"+esc(g.ouLean.toLowerCase().replace("strong ","strong "))+"</span>":"")+"</div>"+
+      "<div class='right'>"+(function(){var c=callFor(g);
+        return "<div class='callv "+c.cls+"'>"+esc(c.big)+"</div>"+
+          (c.sub?"<div class='callr'>"+esc(c.sub)+"</div>":"")+
+          "<div class='callr'>"+(g.stars?g.stars.toFixed(1)+"&#9733; gap":"gap under 0.5&#9733;")+"</div>";})()+"</div>"+
     "</div>"+
     "<button class='more' data-k='"+esc(g.key)+"'>"+(open?"Hide detail":"Show how this number was built")+"</button>"+
     (open?detail(g):"")+
@@ -405,7 +445,8 @@ function viewWeek(){
   var rest=b.games.filter(function(g){return !flagged(g);}).sort(function(x,y){
     return (x.gameday+x.gametime).localeCompare(y.gameday+y.gametime);});
   var h="";
-  h+="<div class='legend'><span>away team favored</span><span>pick&#8217;em</span><span>home team favored</span></div>";
+  h+="<div class='heads'><span>game</span><span>our number against the market</span><span>the call</span></div>"+
+    "<div class='legend'><span>away team favored</span><span>pick&#8217;em</span><span>home team favored</span></div>";
   if(flag.length)h+="<h2 class='group'>Far enough from the market to look at \u2014 spread, total, or both</h2>"+flag.map(gameRow).join("");
   h+="<h2 class='group'>"+(flag.length?"Everything else, in kickoff order":"All games, in kickoff order")+"</h2>"+rest.map(gameRow).join("");
   return h;
