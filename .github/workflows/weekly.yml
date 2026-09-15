@@ -71,4 +71,7 @@ jobs:
       - name: deploy
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-        run: npx --yes netlify-cli@latest deploy --prod --dir . --site $NETLIFY_SITE_ID --message "auto ${{ steps.st.outputs.stage }}" 2>&1 | grep -E "Deploy complete|rror" || true
+        run: |
+          set -o pipefail
+          npx --yes netlify-cli@latest deploy --prod --dir . --site $NETLIFY_SITE_ID --message "auto ${{ steps.st.outputs.stage }}" | tee /tmp/deploy.log
+          grep -q "Deploy complete" /tmp/deploy.log || { echo "::error::Netlify deploy did not complete - the site is now stale"; exit 1; }
