@@ -25,6 +25,20 @@ function app(){
 const A=app();
 const key=(g)=>g.home+'|'+g.away;
 
+// kickoff in real time. gametime is Eastern; US DST runs 2nd Sunday of March to 1st Sunday of November.
+function etOffset(day){
+  const d=new Date(day+"T12:00:00Z"),y=d.getUTCFullYear();
+  const mar=new Date(Date.UTC(y,2,1)),nov=new Date(Date.UTC(y,10,1));
+  const start=new Date(Date.UTC(y,2,1+((7-mar.getUTCDay())%7)+7)),end=new Date(Date.UTC(y,10,1+((7-nov.getUTCDay())%7)));
+  return (d>=start&&d<end)?"-04:00":"-05:00";
+}
+const kickMs=g=>new Date(g.gameday+"T"+(g.gametime||"13:00")+":00"+etOffset(g.gameday)).getTime();
+const preKickClose=(L,g)=>{                       // the last price seen before the ball was snapped
+  const snaps=(L.history||[]).filter(s=>new Date(s.ts).getTime()<kickMs(g));
+  return snaps.length?snaps[snaps.length-1]:null;
+};
+
+
 // ---------- init ratings ----------
 function initRatings(){
   const out={};Object.keys(A.DEFAULT_RATINGS).forEach(t=>{const o=A.OPENING_2026.find(x=>x.t===t);out[t]=parseFloat((A.DEFAULT_RATINGS[t]*A.OPENING_SHRINK+(o?o.d:0)).toFixed(2));});
@@ -40,7 +54,9 @@ async function odds(close){
   if(!r.ok)throw new Error('Odds API '+r.status);const d=await r.json();
   const norm=n=>Object.keys(A.DEFAULT_RATINGS).find(t=>t===n)||n;
   const lines=rd('lines.json',{});const now=new Date().toISOString();let n=0;
+  let skipped=0;
   week.games.forEach(g=>{
+    if(Date.now()>=kickMs(g)){skipped++;return;}   // after kickoff the book quotes the game in progress
     const m=d.find(x=>norm(x.home_team)===g.home&&norm(x.away_team)===g.away);if(!m)return;
     const sp=[],by={},tots=[];
     (m.bookmakers||[]).forEach(bk=>{const sm=(bk.markets||[]).find(x=>x.key==='spreads');if(sm){const o=(sm.outcomes||[]).find(x=>norm(x.name)===g.home);if(o&&o.point!=null){const v=-o.point;sp.push(v);by[bk.title]=v;}}
@@ -51,7 +67,7 @@ async function odds(close){
     lines[key(g)]={open:L.open!=null?L.open:posted,openOu:L.openOu!=null?L.openOu:ou,openTs:L.openTs||now,current:posted,currentOu:ou,byBook:by,ts:now,
       close:close?posted:L.close,closeOu:close?ou:L.closeOu,closeTs:close?now:L.closeTs,history:[...(L.history||[]).slice(-40),{ts:now,posted,ou}]};n++;
   });
-  wr('lines.json',lines);console.log('lines.json: '+n+' games updated'+(close?' (CLOSE)':''));
+  wr('lines.json',lines);console.log('lines.json: '+n+' games updated'+(close?' (CLOSE)':'')+(skipped?', '+skipped+' already kicked off and left alone':''));
 }
 
 // ---------- board ----------
@@ -91,20 +107,28 @@ function grade(){
   const board=rd('board.json',null);if(!board)throw new Error('no board');
   const finals=week.games.filter(g=>g.home_score!=null&&g.away_score!=null);
   if(finals.length<board.games.length*0.5){console.log('only '+finals.length+' finals for week '+week.week+'; not grading yet');return;}
-  if(hist.weeks.some(w=>w.week===board.week&&w.season===board.season)){console.log('week already graded');return;}
+  const lines=rd('lines.json',{});
+  const existing=hist.weeks.find(w=>w.week===board.week&&w.season===board.season);
+  const done=new Set(existing?existing.games.map(g=>g.key):[]);
+  if(existing&&finals.every(f=>done.has(key(f)))){console.log('week already graded, no new finals');return;}
   const calib={...A.CALIB_DEFAULT,...(rd('calib.json',{}))};const hfaBase=A.hfaOf(calib);
   const before={...R.ratings},next={...R.ratings};const graded=[];
   board.games.forEach(bg=>{
-    const f=finals.find(x=>x.id===bg.id);if(!f)return;
-    const margin=f.home_score-f.away_score;const close=bg.close!=null?bg.close:(f.ref_spread!=null?f.ref_spread:bg.market);
+    const f=finals.find(x=>x.id===bg.id);if(!f||done.has(bg.key))return;
+    const margin=f.home_score-f.away_score;
+    const L=lines[bg.key]||{},pre=preKickClose(L,bg);
+    const close=pre?pre.posted:(bg.close!=null?bg.close:(f.ref_spread!=null?f.ref_spread:bg.market));
+    const closeOu=pre?pre.ou:bg.closeOu;
+    const opened=L.open!=null?L.open:bg.market;
     const hfa=bg.neutral?0:hfaBase;
     const out=bg.side&&close!=null?A.gradeSide(margin,close,bg.side):null;
-    const clv=A.clvOf(bg.side,bg.market,close);
+    const clv=A.clvOf(bg.side,opened,close);
     const u=A.tgpl(before[bg.home],before[bg.away],f.home_score,f.away_score,bg.hInj||0,bg.aInj||0,hfa);
     next[bg.home]=u.nH;next[bg.away]=u.nA;
-    graded.push({...bg,hs:f.home_score,as:f.away_score,margin,close,mechOutcome:out,clv,total:f.home_score+f.away_score,nH:u.nH,nA:u.nA,neutral:bg.neutral,modelLine:bg.line});
+    graded.push({...bg,hs:f.home_score,as:f.away_score,margin,close,closeOu,openLine:opened,mechOutcome:out,clv,total:f.home_score+f.away_score,nH:u.nH,nA:u.nA,neutral:bg.neutral,modelLine:bg.line});
   });
-  hist.weeks.push({season:board.season,week:board.week,gradedAt:new Date().toISOString(),ratingsBefore:before,games:graded});
+  if(existing){existing.games=existing.games.concat(graded);existing.gradedAt=new Date().toISOString();}
+  else hist.weeks.push({season:board.season,week:board.week,gradedAt:new Date().toISOString(),ratingsBefore:before,games:graded});
   wr('history.json',hist);
   wr('ratings.json',{...R,asOfWeek:board.week,updated:new Date().toISOString(),ratings:next});
   // calibration from all graded slate games (app function; slates shape)
