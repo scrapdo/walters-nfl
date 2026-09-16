@@ -1,6 +1,6 @@
 # Walters NFL -- automated weekly pipeline
 
-**Site:** https://walters-nfl-analyzer.netlify.app -- the week board, built for you before you open it.
+**Site:** https://scrapdo.github.io/walters-nfl/ -- the week board, built for you before you open it.
 `index.html` reads the JSON in `data/` and adds nothing of its own except a what-if: change any player's
 status and the line recomputes in the browser with the same engine the pipeline uses. `classic.html` is the
 old hands-on app (fetch rosters, analyze one game at a time) and needs your own API keys in its Settings tab.
@@ -28,7 +28,8 @@ Outputs in `data/`: week.json (inputs), lines.json (open/current/close per book)
 deltas, line, market, stars, pick, O/U), reads.json (AI reads), history.json (graded weeks), ratings.json,
 calib.json.
 
-Secrets (Settings -> Secrets and variables -> Actions): ODDS_API_KEY, ANTHROPIC_API_KEY, NETLIFY_AUTH_TOKEN.
+Secrets (Settings -> Secrets and variables -> Actions): ODDS_API_KEY, ANTHROPIC_API_KEY.
+Hosting is GitHub Pages from `main`, so the data commit at the end of each run is the deploy -- there is no publish step to fail.
 Manual run: Actions -> walters-weekly -> Run workflow -> pick a stage.
 
 Calibration notes: injury statuses come from 36,723 report lines (2015-25) matched to snap counts; HFA 2.0 and
