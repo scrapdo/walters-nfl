@@ -220,10 +220,13 @@ function head(){
   var flag=b.games.filter(function(g){return g.stars>=1;});
   var leans=b.games.filter(function(g){return !!g.ouLean;});
   var bets=[],pending=0;
+  var wanted=0;
   flag.forEach(function(g){
     var rd=D.reads&&D.reads[g.key];
     if(!rd){pending++;return;}
-    if(!/NO BET/i.test(rd.recommendation||""))bets.push(g);
+    if(/NO BET/i.test(rd.recommendation||""))return;
+    wanted++;
+    if(infoBehind(g).ok)bets.push(g);
   });
   document.getElementById("wk").innerHTML="<b>Week "+b.week+"</b> &#183; "+b.season;
   var f=document.getElementById("fresh");
@@ -238,7 +241,9 @@ function head(){
       (leans.length?" The totals model also leans on "+leans.length+" game"+(leans.length>1?"s":"")+", though it has never beaten the closing total in testing.":"");
   }else if(flag.length){
     v=flag.length+" games sit far from the market.";
-    s=(pending?"Reads are still pending on "+pending+" of them. ":"None of the gaps trace to information \u2014 they come from the ratings, not from news. ")+
+    s=(pending?"Reads are still pending on "+pending+" of them. ":"")+
+      (wanted?"The written read wanted to bet "+wanted+" of them, but none of the gaps trace to information \u2014 they come from the ratings, not from news, so the board holds. ":
+              "None of the gaps trace to information \u2014 they come from the ratings, not from news. ")+
       "Disagreement is not edge until the signal reading turns positive.";
     if(leans.length)s+=" The totals model also leans on "+leans.length+" game"+(leans.length>1?"s":"")+", though it has never beaten the closing total in testing.";
   }else{
@@ -305,13 +310,23 @@ function sideSpread(g,side){
   vals.forEach(function(x){ if(side==="away"?x.v>best.v:x.v<best.v)best=x; });
   return {num:side==="away"?best.v:-best.v,book:best.b};
 }
+
+function infoBehind(g){
+  var inj=(g.hInj||0)+(g.aInj||0);
+  var c=(D.board&&D.board.calib)||{};
+  if(inj>=0.5)return {ok:true,why:"injury news worth "+inj.toFixed(1)+" pts"};
+  if(c.ic!=null&&c.ic>=0.15&&c.nIc>=60)return {ok:true,why:"our disagreements have been predicting results"};
+  return {ok:false,why:inj>0?"only "+inj.toFixed(1)+" pts of injury news behind it":"no injury or availability news behind the gap"};
+}
 function callFor(g){
   var rd=D.reads&&D.reads[g.key];
   if(rd&&!/NO BET/i.test(rd.recommendation||"")){
     var side=/HOME/i.test(rd.recommendation)?"home":"away";
-    var team=side==="home"?g.home:g.away, best=sideSpread(g,side);
+    var team=side==="home"?g.home:g.away, best=sideSpread(g,side), info=infoBehind(g);
+    if(!info.ok)return {cls:"none",big:"No bet",
+      sub:"the read likes "+ab(team)+", but "+info.why};
     return {cls:"bet",big:"Take "+ab(team)+(best?" "+sp(best.num):""),
-      sub:(best&&best.book?"best price at "+best.book+", ":"")+"confidence "+rd.confidence+" of 5"};
+      sub:(best&&best.book?"best price at "+best.book+", ":"")+"confidence "+rd.confidence+" of 5, "+info.why};
   }
   if(rd)return {cls:"none",big:"No bet",
     sub:(g.hInj||g.aInj)?"the gap is not explained by the injuries":"nothing in the news behind the gap"};
@@ -531,6 +546,10 @@ function viewAbout(){
   "a closing total. It is shown for context and never as a bet.</p>"+
   "<p>What can be an edge is information \u2014 an injury or availability change the market has not priced yet. That is what the roster work and the evening "+
   "runs are for, and it is the one thing worth acting on quickly.</p>"+
+  "<p>So the board enforces that rule rather than trusting the write-up. A game is only called as a bet when there is something behind the gap: "+
+  "injury value on one of the two sides, or a signal reading that has earned trust over enough graded games. If the written read likes a side but nothing "+
+  "is behind the number, the call stays <b>no bet</b> and tells you what the read wanted. Early in a season this will hold almost everything back, "+
+  "which is correct \u2014 the ratings have just moved and are at their least reliable.</p>"+
   "<h2 class='group'>Using it through the week</h2>"+
   "<dl>"+
     "<dt>Tuesday morning</dt><dd>The board rebuilds from scratch: schedule, depth charts, player values, opening prices. Skim the flagged group and note which gaps have a reason behind them.</dd>"+
