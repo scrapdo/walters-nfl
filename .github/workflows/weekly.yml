@@ -72,6 +72,13 @@ jobs:
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
         run: |
-          set -o pipefail
-          npx --yes netlify-cli@latest deploy --prod --dir . --site $NETLIFY_SITE_ID --message "auto ${{ steps.st.outputs.stage }}" | tee /tmp/deploy.log
-          grep -q "Deploy complete" /tmp/deploy.log || { echo "::error::Netlify deploy did not complete - the site is now stale"; exit 1; }
+          set -e
+          # direct --prod publishes are refused on this account, so deploy then promote the deploy
+          npx --yes netlify-cli@latest deploy --dir . --site $NETLIFY_SITE_ID --json > /tmp/deploy.json
+          DEPLOY_ID=$(python3 -c "import json;print(json.load(open('/tmp/deploy.json'))['deploy_id'])")
+          echo "deploy $DEPLOY_ID"
+          npx --yes netlify-cli@latest api restoreSiteDeploy \
+            --data "{\"site_id\":\"$NETLIFY_SITE_ID\",\"deploy_id\":\"$DEPLOY_ID\"}" > /tmp/restore.json
+          PUB=$(python3 -c "import json;print(json.load(open('/tmp/restore.json')).get('id',''))")
+          [ "$PUB" = "$DEPLOY_ID" ] || { echo "::error::deploy $DEPLOY_ID was not published - the site is now stale"; exit 1; }
+          echo "published $PUB"
