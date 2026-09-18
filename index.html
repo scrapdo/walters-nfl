@@ -123,6 +123,9 @@ td.name{font-variant-numeric:normal}
 @media (max-width:720px){.about dl{grid-template-columns:1fr;gap:2px 0}
   .about dt{margin-top:10px;font-weight:600;color:var(--ink)}}
 .empty{padding:42px 0;color:var(--muted);max-width:52ch}
+.warn{color:var(--loss);font-weight:600}
+.alert{display:block;margin-top:10px;padding:10px 13px;border-left:2px solid var(--loss);
+  background:#F6ECEA;color:var(--ink);font-size:14px;max-width:64ch}
 .foot{margin-top:34px;padding-top:16px;border-top:1px solid var(--rule);font-size:12.5px;color:var(--muted)}
 @media (max-width:720px){
   .grow{grid-template-columns:1fr;gap:10px}
@@ -230,7 +233,11 @@ function head(){
   });
   document.getElementById("wk").innerHTML="<b>Week "+b.week+"</b> &#183; "+b.season;
   var f=document.getElementById("fresh");
-  f.textContent="built "+ago(b.generated)+(b.games[0]&&b.games[0].marketSrc==="odds"?", live book prices":", reference lines");
+  var injPts=b.games.reduce(function(a,g){return a+(g.hInj||0)+(g.aInj||0);},0);
+  var injLines=parseInt((b.sources&&b.sources.injuries||"").match(/^\d+/)||0,10)||0;
+  f.innerHTML="built "+ago(b.generated)+(b.games[0]&&b.games[0].marketSrc==="odds"?", live book prices":", reference lines")+
+    (injLines?", injury report priced in ("+injPts.toFixed(1)+" pts)":
+      "<span class='warn'>no injury report loaded</span>");
   var v,s;
   if(bets.length){
     v=(bets.length===1?"One game":bets.length+" games")+" clears the bar."; 
@@ -252,7 +259,9 @@ function head(){
       (leans.length?" The totals model leans on "+leans.length+" game"+(leans.length>1?"s":"")+", but it has never beaten the closing total in testing.":"");
   }
   document.getElementById("verdict").textContent=v;
-  document.getElementById("sub").textContent=s;
+  document.getElementById("sub").innerHTML=esc(s)+
+    (injLines?"":"<span class='alert'>The injury report has not loaded for this week, so every gap below is rating drift by definition and nothing can clear the bar. "+
+      "The league posts reports Wednesday through Friday; the board picks them up that evening.</span>");
   var sw=signalWord(b.calib&&b.calib.ic);
   var clvTxt=R.nclv?num(R.clv,2)+" pts":"\u2014";
   var recTxt=(R.mw+R.ml)?R.mw+"\u2013"+R.ml+(R.mp?"\u2013"+R.mp:""):"\u2014";
