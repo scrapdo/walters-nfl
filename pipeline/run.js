@@ -97,46 +97,68 @@ function board(){
       modelOu,ouEdge,ouLean:ouEdge==null?null:ouEdge>=4?'STRONG OVER':ouEdge>=2.5?'OVER':ouEdge<=-4?'STRONG UNDER':ouEdge<=-2.5?'UNDER':null,
       units:{home:week.units[g.home]||null,away:week.units[g.away]||null},qbs:{home:hRos.filter(p=>p.p==='QB').slice(0,2),away:aRos.filter(p=>p.p==='QB').slice(0,2)}};
   }).sort((a,b)=>b.stars-a.stars||Math.abs(b.edge||0)-Math.abs(a.edge||0));
-  wr('board.json',{season:week.season,week:week.week,generated:new Date().toISOString(),ratingsAsOf:R.asOfWeek,calib:{hfa:A.hfaOf(calib),ic:calib.ic,nIc:calib.nIc,ouScalar:calib.ouScalar,qbMult},sources:week.sources,games});
+  const payload={season:week.season,week:week.week,generated:new Date().toISOString(),ratingsAsOf:R.asOfWeek,calib:{hfa:A.hfaOf(calib),ic:calib.ic,nIc:calib.nIc,ouScalar:calib.ouScalar,qbMult},sources:week.sources,games};
+  wr('board.json',payload);
+  try{fs.mkdirSync(path.join(ROOT,'data','boards'),{recursive:true});}catch(e){}
+  wr('boards/'+week.season+'-w'+String(week.week).padStart(2,'0')+'.json',payload);   // a late Monday final can still be graded next week
   console.log('board.json: '+games.length+' games, '+games.filter(g=>g.stars>=STAR_THRESHOLD).length+' at >= '+STAR_THRESHOLD+'*, market source: '+(games[0]&&games[0].marketSrc));
 }
 
 // ---------- grade ----------
+// Walks every archived board and grades any game that now has a final and has not been graded yet.
+// That means a Monday night game is picked up on the next run instead of being lost when the week rolls over.
 function grade(){
-  const week=rd('week.json',null);const R=rd('ratings.json',null);const hist=rd('history.json',{weeks:[]});
-  const board=rd('board.json',null);if(!board)throw new Error('no board');
-  const finals=week.games.filter(g=>g.home_score!=null&&g.away_score!=null);
-  if(finals.length<board.games.length*0.5){console.log('only '+finals.length+' finals for week '+week.week+'; not grading yet');return;}
-  const lines=rd('lines.json',{});
-  const existing=hist.weeks.find(w=>w.week===board.week&&w.season===board.season);
-  const done=new Set(existing?existing.games.map(g=>g.key):[]);
-  if(existing&&finals.every(f=>done.has(key(f)))){console.log('week already graded, no new finals');return;}
+  const R=rd('ratings.json',null);const hist=rd('history.json',{weeks:[]});
+  if(!R)throw new Error('no ratings');
+  const finals=rd('finals.json',[]);
+  if(!finals.length){console.log('no finals file yet');return;}
+  const fin={};finals.forEach(f=>{fin[f.week+'|'+f.home+'|'+f.away]=f;});
+  const dir=path.join(ROOT,'data','boards');
+  const files=fs.existsSync(dir)?fs.readdirSync(dir).filter(f=>f.endsWith('.json')).sort():[];
+  if(!files.length){console.log('no archived boards yet');return;}
   const calib={...A.CALIB_DEFAULT,...(rd('calib.json',{}))};const hfaBase=A.hfaOf(calib);
-  const before={...R.ratings},next={...R.ratings};const graded=[];
-  board.games.forEach(bg=>{
-    const f=finals.find(x=>x.id===bg.id);if(!f||done.has(bg.key))return;
-    const margin=f.home_score-f.away_score;
-    const L=lines[bg.key]||{},pre=preKickClose(L,bg);
-    const close=pre?pre.posted:(bg.close!=null?bg.close:(f.ref_spread!=null?f.ref_spread:bg.market));
-    const closeOu=pre?pre.ou:bg.closeOu;
-    const opened=L.open!=null?L.open:bg.market;
-    const hfa=bg.neutral?0:hfaBase;
-    const out=bg.side&&close!=null?A.gradeSide(margin,close,bg.side):null;
-    const clv=A.clvOf(bg.side,opened,close);
-    const u=A.tgpl(before[bg.home],before[bg.away],f.home_score,f.away_score,bg.hInj||0,bg.aInj||0,hfa);
-    next[bg.home]=u.nH;next[bg.away]=u.nA;
-    graded.push({...bg,hs:f.home_score,as:f.away_score,margin,close,closeOu,openLine:opened,mechOutcome:out,clv,total:f.home_score+f.away_score,nH:u.nH,nA:u.nA,neutral:bg.neutral,modelLine:bg.line});
+  const lines=rd('lines.json',{});
+  let next={...R.ratings},added=0,asOf=R.asOfWeek||0;
+  files.forEach(fname=>{
+    const b=JSON.parse(fs.readFileSync(path.join(dir,fname),'utf8'));
+    let entry=hist.weeks.find(w=>w.week===b.week&&w.season===b.season);
+    const done=new Set(entry?entry.games.map(g=>g.key):[]);
+    const before={...next};const graded=[];
+    b.games.forEach(bg=>{
+      if(done.has(bg.key))return;
+      const f=fin[b.week+'|'+bg.home+'|'+bg.away];if(!f)return;
+      const margin=f.home_score-f.away_score;
+      const L=lines[bg.key]||{},pre=preKickClose(L,bg);
+      const close=pre?pre.posted:(bg.close!=null?bg.close:bg.market);
+      const closeOu=pre?pre.ou:bg.closeOu;
+      const opened=L.open!=null?L.open:bg.market;
+      const hfa=bg.neutral?0:hfaBase;
+      const out=bg.side&&close!=null?A.gradeSide(margin,close,bg.side):null;
+      const clv=A.clvOf(bg.side,opened,close);
+      const u=A.tgpl(next[bg.home],next[bg.away],f.home_score,f.away_score,bg.hInj||0,bg.aInj||0,hfa);
+      next[bg.home]=u.nH;next[bg.away]=u.nA;
+      graded.push({...bg,hs:f.home_score,as:f.away_score,margin,close,closeOu,openLine:opened,mechOutcome:out,clv,
+        total:f.home_score+f.away_score,nH:u.nH,nA:u.nA,neutral:bg.neutral,modelLine:bg.line});
+    });
+    if(!graded.length)return;
+    if(entry){entry.games=entry.games.concat(graded);entry.gradedAt=new Date().toISOString();}
+    else hist.weeks.push({season:b.season,week:b.week,gradedAt:new Date().toISOString(),ratingsBefore:before,games:graded});
+    added+=graded.length;asOf=Math.max(asOf,b.week);
+    const w=graded.filter(g=>g.mechOutcome==='W').length,l=graded.filter(g=>g.mechOutcome==='L').length;
+    console.log('  week '+b.week+': +'+graded.length+' games graded, model picks '+w+'-'+l);
   });
-  if(existing){existing.games=existing.games.concat(graded);existing.gradedAt=new Date().toISOString();}
-  else hist.weeks.push({season:board.season,week:board.week,gradedAt:new Date().toISOString(),ratingsBefore:before,games:graded});
+  if(!added){console.log('nothing new to grade');return;}
+  hist.weeks.sort((a,b)=>a.season-b.season||a.week-b.week);
   wr('history.json',hist);
-  wr('ratings.json',{...R,asOfWeek:board.week,updated:new Date().toISOString(),ratings:next});
-  // calibration from all graded slate games (app function; slates shape)
+  wr('ratings.json',{...R,asOfWeek:asOf,updated:new Date().toISOString(),ratings:next});
   const slates=hist.weeks.map(w=>({wk:w.week,games:w.games.map(g=>({hs:g.hs,as:g.as,modelLine:g.modelLine,close:g.close,neutral:g.neutral}))}));
   const histEntries=hist.weeks.flatMap(w=>w.games.filter(g=>g.modelOu!=null).map(g=>({hs:g.hs,as:g.as,modelOU:g.modelOu})));
   const c=A.computeCalibration(slates,histEntries,calib);wr('calib.json',c);
-  const w=graded.filter(g=>g.mechOutcome==='W').length,l=graded.filter(g=>g.mechOutcome==='L').length;const clvs=graded.filter(g=>g.clv!=null).map(g=>g.clv);
-  console.log('graded week '+board.week+': '+graded.length+' games | model picks '+w+'-'+l+' | avg CLV '+(clvs.length?(clvs.reduce((a,b)=>a+b,0)/clvs.length).toFixed(2):'--')+' | ratings re-rated (32) | IC '+c.ic+' n='+c.nIc);
+  const all=hist.weeks.flatMap(w=>w.games);
+  const W=all.filter(g=>g.mechOutcome==='W').length,L2=all.filter(g=>g.mechOutcome==='L').length;
+  const clvs=all.filter(g=>g.clv!=null).map(g=>g.clv);
+  console.log('graded '+added+' new game(s) | season model picks '+W+'-'+L2+' | avg CLV '+
+    (clvs.length?(clvs.reduce((a,b)=>a+b,0)/clvs.length).toFixed(2):'--')+' | IC '+c.ic+' n='+c.nIc);
 }
 
 // ---------- analyze (threshold games) ----------

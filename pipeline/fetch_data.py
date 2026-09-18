@@ -168,6 +168,13 @@ def main():
         if isinstance(o,list): return [clean(v) for v in o]
         return o
     json.dump(clean(out),open(a.out,'w'),allow_nan=False)
+    # every completed regular-season game, so a late final can be graded on any later run
+    fin=games[(games.season==season)&(games.game_type=='REG')&games.result.notna()]
+    finals=[{"id":r.game_id,"week":int(r.week),
+             "home":ABBR.get(CODE.get(r.home_team,r.home_team)),"away":ABBR.get(CODE.get(r.away_team,r.away_team)),
+             "home_score":int(r.home_score),"away_score":int(r.away_score)} for r in fin.itertuples()]
+    json.dump(clean(finals),open(os.path.join(os.path.dirname(a.out),'finals.json'),'w'),allow_nan=False)
+    print(f"  finals.json: {len(finals)} completed games this season")
     print(f"week {week} {season}: {len(gl)} games, {sum(len(v) for v in rosters.values())} roster spots, injuries: {inj_note}, players: {psrc}, teamstats: {ts_src}")
 
 if __name__=="__main__": main()

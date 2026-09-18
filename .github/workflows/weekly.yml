@@ -50,6 +50,7 @@ jobs:
           case "$STAGE" in
             tuesday|daily)
               python3 pipeline/fetch_data.py --stage $STAGE
+              node pipeline/run.js grade          # picks up any late final, e.g. Monday night
               node pipeline/run.js odds
               node pipeline/run.js board
               node pipeline/run.js analyze ;;
@@ -58,7 +59,8 @@ jobs:
               node pipeline/run.js board ;;
             grade)
               python3 pipeline/fetch_data.py --stage grade
-              node pipeline/run.js grade ;;
+              node pipeline/run.js grade
+              node pipeline/run.js board ;;        # rebuild so the site shows the new ratings
           esac
       - name: commit data (this push is the deploy -- Pages serves main)
         run: |
