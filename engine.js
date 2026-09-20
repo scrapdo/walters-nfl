@@ -253,3 +253,67 @@ function ratingSuggestion(b,ratings,hfa){
     nA:parseFloat((0.9*aR+0.1*aT).toFixed(2)),
   };
 }
+
+
+// -- PRICE MATH ------------------------------------------------------------------
+// The model only ever compared numbers. What you actually pay decides whether a
+// number is worth taking: at -110 you need 52.38% to break even, at -105 only 51.22%.
+// Our best tested rule returns 52.6%, so the price is worth more than the pick.
+function impliedProb(american){                     // what the book's price says you must hit
+  var a=parseFloat(american);
+  if(!isFinite(a)||a===0)return 0.5238;             // assume standard juice when a book gives us nothing
+  return a>0 ? 100/(a+100) : (-a)/((-a)+100);
+}
+function profitPerUnit(american){
+  var a=parseFloat(american);
+  if(!isFinite(a)||a===0)a=-110;
+  return a>0 ? a/100 : 100/(-a);
+}
+// The star engine already measures how many games land between our number and the market's.
+// Half of those flip from loss to win, which is the standard way to turn points into probability.
+function winProbFromPct(pct){
+  return Math.max(0.02,Math.min(0.98,0.5+(parseFloat(pct)||0)/200));
+}
+function evPerUnit(p,american){                      // expected return on one unit risked
+  return p*profitPerUnit(american)-(1-p);
+}
+function priceQuote(line,point,side,american){
+  if(point==null)return null;
+  var st=calcStars(line,point);
+  var favOurs=(side==="home")?(line>point):(line<point);
+  var p=favOurs?winProbFromPct(st.pct):1-winProbFromPct(st.pct);
+  return {point:point,price:american,pct:parseFloat(st.pct),stars:parseFloat(st.stars),
+          win:parseFloat(p.toFixed(4)),need:parseFloat(impliedProb(american).toFixed(4)),
+          ev:parseFloat(evPerUnit(p,american).toFixed(4))};
+}
+// Best book means best expected value, not the biggest number. A worse number at a
+// much better price can win, and often does.
+function bestQuote(line,side,books){
+  var out=null;
+  (books||[]).forEach(function(b){
+    var pt=(side==="away")?b.pt:-b.pt;              // the number as that side is written
+    var price=(side==="away")?b.ap:b.hp;
+    var q=priceQuote(line,(side==="away")?b.pt:b.pt,side,price);
+    if(!q)return;
+    q.book=b.book;q.shown=pt;
+    if(!out||q.ev>out.ev)out=q;
+  });
+  return out;
+}
+// The least favourable number still worth taking at this price. Past it, pass.
+// Scan outward from our own number: the first point where the price is beaten is the threshold.
+function walkAway(line,side,american){
+  var step=(side==="home")?-0.5:0.5;                // outward means better for the side we like
+  for(var i=1;i<=60;i++){
+    var m=Math.round((line+step*i)*2)/2;
+    var q=priceQuote(line,m,side,american);
+    if(q&&q.ev>0)return m;                          // in home-margin terms, like everything else
+  }
+  return null;
+}
+// Is the number on the screen still on the right side of that threshold?
+function stillWorthIt(line,side,market,american){
+  var w=walkAway(line,side,american);
+  if(w==null||market==null)return false;
+  return (side==="home")? market<=w : market>=w;
+}

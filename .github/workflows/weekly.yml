@@ -53,7 +53,8 @@ jobs:
               node pipeline/run.js grade          # picks up any late final, e.g. Monday night
               node pipeline/run.js odds
               node pipeline/run.js board
-              node pipeline/run.js analyze ;;
+              node pipeline/run.js analyze
+              node pipeline/run.js ledger ;;
             close)
               node pipeline/run.js odds --close
               node pipeline/run.js board ;;

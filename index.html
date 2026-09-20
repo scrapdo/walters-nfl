@@ -322,23 +322,36 @@ function sideSpread(g,side){
   return {num:side==="away"?best.v:-best.v,book:best.b};
 }
 
+function evOf(g){                      // expected return per 100 risked, at the best price we can find
+  if(g.quote&&typeof g.quote.ev==="number")return g.quote.ev*100;
+  return null;
+}
 function qualifies(g){
   // What survived eleven seasons: two stars or more, on a game the market prices at three points or more.
   // Injury news behind the gap does NOT help. Those games went 51.1% against 54.7% for games without it,
   // because the market prices injuries sharply. Injuries still sharpen our number, they just do not pick winners.
   if(g.stars<2)return {ok:false,why:"the gap is under two stars"};
   if(g.market==null||Math.abs(g.market)<3)return {ok:false,why:"the market prices this inside a field goal, where we have been worst"};
-  return {ok:true,why:"two stars, on a game priced outside a field goal"};
+  var ev=evOf(g);
+  if(ev!=null&&ev<=0)return {ok:false,why:"the price eats it: "+ev.toFixed(1)+" per 100 at the best book"};
+  if(g.worth===false)return {ok:false,why:"the number has moved past where it was worth taking"};
+  return {ok:true,why:"two stars, priced outside a field goal, and the price still leaves value"};
 }
 function callFor(g){
   var rd=D.reads&&D.reads[g.key];
   if(rd&&!/NO BET/i.test(rd.recommendation||"")){
     var side=/HOME/i.test(rd.recommendation)?"home":"away";
-    var team=side==="home"?g.home:g.away, best=sideSpread(g,side), q=qualifies(g);
+    var team=side==="home"?g.home:g.away, q=qualifies(g);
+    var quote=g.quote, best=quote?{num:quote.shown,book:quote.book}:sideSpread(g,side);
     if(!q.ok)return {cls:"none",big:"No bet",
       sub:"the read likes "+ab(team)+", but "+q.why};
-    return {cls:"bet",big:"Take "+ab(team)+(best?" "+sp(best.num):""),
-      sub:(best&&best.book?"best price at "+best.book+", ":"")+"confidence "+rd.confidence+" of 5"};
+    var walkShown=(g.walk==null)?null:(side==="away"?g.walk:-g.walk);
+    var ev=evOf(g);
+    return {cls:"bet",
+      big:"Take "+ab(team)+(best?" "+sp(best.num):"")+(quote&&quote.price?" at "+(quote.price>0?"+":"")+quote.price:""),
+      sub:(best&&best.book?best.book+", ":"")+
+          (walkShown!=null?"pass below "+sp(walkShown):"")+
+          (ev!=null?", worth "+(ev>0?"+":"")+ev.toFixed(1)+" per 100":"")};
   }
   if(rd)return {cls:"none",big:"No bet",
     sub:(g.hInj||g.aInj)?"the gap is not explained by the injuries":"nothing in the news behind the gap"};
@@ -398,8 +411,20 @@ function detail(g){
         (g.aInj?"<div class='line'><span>"+esc(ab(g.away))+" injuries</span><span class='pos num'>+"+g.aInj.toFixed(2)+"</span></div>":"")+
         "<div class='line'><span><b>Our line</b></span><span class='num'><b>"+num(g.line,2)+"</b></span></div>"+
       "</div>"+
-      "<div><h3>Market</h3>"+
-        books.map(function(b){return "<div class='line'><span>"+esc(b)+"</span><span class='num'>"+num(g.byBook[b])+"</span></div>";}).join("")+
+      "<div><h3>Market, ranked by what it pays"+(g.side?" on "+esc(ab(g.side==="home"?g.home:g.away)):"")+"</h3>"+
+        ((g.books&&g.books.length&&g.side)
+          ? g.books.map(function(b){
+              var shown=g.side==="away"?b.pt:-b.pt, price=g.side==="away"?b.ap:b.hp;
+              var qq=(typeof priceQuote==="function")?priceQuote(g.line,b.pt,g.side,price):null;
+              return {b:b,shown:shown,price:price,ev:qq?qq.ev*100:null};
+            }).sort(function(x,y){return (y.ev||-99)-(x.ev||-99);})
+            .map(function(r){return "<div class='line'><span>"+esc(r.b.book)+"</span><span class='num'>"+
+              sp(r.shown)+" at "+(r.price>0?"+":"")+r.price+
+              (r.ev!=null?"  <span class='"+(r.ev>0?"pos":"neg")+"'>"+(r.ev>0?"+":"")+r.ev.toFixed(1)+"</span>":"")+"</span></div>";}).join("")
+          : books.map(function(b){return "<div class='line'><span>"+esc(b)+"</span><span class='num'>"+num(g.byBook[b])+" at -110 assumed</span></div>";}).join(""))+
+        (g.walk!=null&&g.side?"<div class='line'><span><b>Walk away below</b></span><span class='num'><b>"+
+          sp(g.side==="away"?g.walk:-g.walk)+"</b></span></div>":"")+
+        (g.breakEven?"<div class='line'><span>Price needs you to hit</span><span class='num'>"+(g.breakEven*100).toFixed(1)+"%</span></div>":"")+
         (g.open!=null?"<div class='line'><span>Opened</span><span class='num'>"+num(g.open)+"</span></div>":"")+
         (g.close!=null?"<div class='line'><span>Closed</span><span class='num'>"+num(g.close)+"</span></div>":"")+
         (g.modelOu!=null?"<div class='line'><span>Total: our model</span><span class='num'>"+g.modelOu+"</span></div>":"")+
@@ -565,6 +590,16 @@ function viewAbout(){
   "eleven seasons, because the ladder through the three inflates trivial gaps. Under the rule: 54.9% across all eleven seasons, and 52.6% across the four "+
   "seasons held back while the rule was being chosen, against a break-even of 52.4%. That held-back number is the honest one. It is about three games a "+
   "week rather than eight, and the written read can still veto any of them.</p>"+
+  "<h2 class='group'>Why the price matters more than the pick</h2>"+
+  "<p>At the standard price of -110 you must win 52.4% of your bets to break even. At -105 you need only 51.2%. Our rule wins about 52.6% "+
+  "of the time, which at -110 returns about 40 cents per 100 risked, and at -105 returns about 2.70. Same games, same sides, six times the "+
+  "return, purely from what you paid.</p>"+
+  "<p>So every call now names a price and a book, and the board ranks books by what they pay rather than by the number alone. A worse number "+
+  "at a much better price often wins that comparison. Each call also carries a <b>walk away</b> number: the least favourable line still worth "+
+  "taking at that price. If the market has moved past it by the time you get there, the bet is gone. Do not chase it.</p>"+
+  "<p>The other half of this is the ladder. Three points decides about eight percent of NFL games and seven decides about six percent. Moving "+
+  "from +3 to +3.5 is worth roughly four points of win rate, which dwarfs anything the model itself produces. That is why the walk away number "+
+  "is usually the most important figure on the row.</p>"+
   "<h2 class='group'>Using it through the week</h2>"+
   "<dl>"+
     "<dt>Tuesday morning</dt><dd>The board rebuilds from scratch: schedule, depth charts, player values, opening prices. Skim the flagged group and note which gaps have a reason behind them.</dd>"+

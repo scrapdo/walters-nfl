@@ -15,7 +15,7 @@ const READ_MODEL=process.env.READ_MODEL||'claude-fable-5-1';
 // ---------- model engine (engine.js is the single source of truth, shared with the UI) ----------
 function app(){
   const code=fs.readFileSync(path.join(ROOT,'engine.js'),'utf8');
-  const WANT=['DEFAULT_RATINGS','HOME_ADV','PV','calcStars','POS_GROUP','STACK_MULT','Q_PCT','calcInjuryDelta','OU_WX','OFF_GROUPS','splitInjury','calcModelTotal','CALIB_DEFAULT','CALIB_PRIOR_N','HIST_STARS','hfaOf','wilson','computeCalibration','gradeSide','tgpl','clvOf','clvOuOf','OPENING_2026','OPENING_SHRINK','QB_SEED','ABBR'];
+  const WANT=['DEFAULT_RATINGS','HOME_ADV','PV','calcStars','POS_GROUP','STACK_MULT','Q_PCT','calcInjuryDelta','OU_WX','OFF_GROUPS','splitInjury','calcModelTotal','CALIB_DEFAULT','CALIB_PRIOR_N','HIST_STARS','hfaOf','wilson','computeCalibration','gradeSide','tgpl','clvOf','clvOuOf','OPENING_2026','OPENING_SHRINK','QB_SEED','ABBR','impliedProb','profitPerUnit','winProbFromPct','evPerUnit','priceQuote','bestQuote','walkAway','stillWorthIt'];
   const ctx={console};vm.createContext(ctx);
   vm.runInContext(code+'\nthis.__x={'+WANT.join(',')+'};',ctx);
   const missing=WANT.filter(w=>ctx.__x[w]===undefined);
@@ -58,13 +58,17 @@ async function odds(close){
   week.games.forEach(g=>{
     if(Date.now()>=kickMs(g)){skipped++;return;}   // after kickoff the book quotes the game in progress
     const m=d.find(x=>norm(x.home_team)===g.home&&norm(x.away_team)===g.away);if(!m)return;
-    const sp=[],by={},tots=[];
-    (m.bookmakers||[]).forEach(bk=>{const sm=(bk.markets||[]).find(x=>x.key==='spreads');if(sm){const o=(sm.outcomes||[]).find(x=>norm(x.name)===g.home);if(o&&o.point!=null){const v=-o.point;sp.push(v);by[bk.title]=v;}}
+    const sp=[],by={},tots=[],books=[];
+    (m.bookmakers||[]).forEach(bk=>{const sm=(bk.markets||[]).find(x=>x.key==='spreads');
+      if(sm){const oh=(sm.outcomes||[]).find(x=>norm(x.name)===g.home);
+             const oa=(sm.outcomes||[]).find(x=>norm(x.name)===g.away);
+        if(oh&&oh.point!=null){const v=-oh.point;sp.push(v);by[bk.title]=v;
+          books.push({book:bk.title,pt:v,hp:(oh.price!=null?oh.price:-110),ap:(oa&&oa.price!=null?oa.price:-110)});}}
       const tm=(bk.markets||[]).find(x=>x.key==='totals');if(tm){const o=(tm.outcomes||[]).find(x=>x.name==='Over');if(o&&o.point!=null)tots.push(o.point);}});
     if(!sp.length)return;
     const posted=parseFloat((sp.reduce((a,b)=>a+b,0)/sp.length).toFixed(1)),ou=tots.length?parseFloat((tots.reduce((a,b)=>a+b,0)/tots.length).toFixed(1)):null;
     const L=lines[key(g)]||{};
-    lines[key(g)]={open:L.open!=null?L.open:posted,openOu:L.openOu!=null?L.openOu:ou,openTs:L.openTs||now,current:posted,currentOu:ou,byBook:by,ts:now,
+    lines[key(g)]={open:L.open!=null?L.open:posted,openOu:L.openOu!=null?L.openOu:ou,openTs:L.openTs||now,current:posted,currentOu:ou,byBook:by,books:books,ts:now,
       close:close?posted:L.close,closeOu:close?ou:L.closeOu,closeTs:close?now:L.closeTs,history:[...(L.history||[]).slice(-40),{ts:now,posted,ou}]};n++;
   });
   wr('lines.json',lines);console.log('lines.json: '+n+' games updated'+(close?' (CLOSE)':'')+(skipped?', '+skipped+' already kicked off and left alone':''));
@@ -90,7 +94,13 @@ function board(){
     const modelOu=ou0?parseFloat((ou0.total*(calib.on?calib.ouScalar:1)).toFixed(1)):null;
     const ouEdge=modelOu!=null&&mktOu!=null?parseFloat((modelOu-mktOu).toFixed(1)):null;
     const inj=(dl,ros)=>dl.details.map(d=>({n:d.n,p:d.p,st:d.st,loss:d.loss,repl:d.repl,idx:(ros.find(x=>x.n===d.n)||{}).idx}));
+    const books=L.books||[];
+    const quote=side?A.bestQuote(line,side,books):null;
+    const price=quote?quote.price:-110;
+    const walk=side?A.walkAway(line,side,price):null;
+    const worth=side?A.stillWorthIt(line,side,mkt,price):false;
     return{id:g.id,key:key(g),away:g.away,home:g.home,gameday:g.gameday,gametime:g.gametime,neutral:g.neutral,
+      books,quote,walk,worth,breakEven:A.impliedProb(price),
       hR,aR,hfa,base,line,hInj:hD.total,aInj:aD.total,hStack:hD.stacked,aStack:aD.stacked,hInjuries:inj(hD,hRos),aInjuries:inj(aD,aRos),
       market:mkt,marketOu:mktOu,marketSrc:mktSrc,byBook:L.byBook||{},open:L.open!=null?L.open:null,close:L.close!=null?L.close:null,
       stars,pct:st.pct,side,edge:mkt!=null?parseFloat((line-mkt).toFixed(1)):null,
@@ -137,6 +147,7 @@ function grade(){
       const clv=A.clvOf(bg.side,opened,close);
       const u=A.tgpl(next[bg.home],next[bg.away],f.home_score,f.away_score,bg.hInj||0,bg.aInj||0,hfa);
       next[bg.home]=u.nH;next[bg.away]=u.nA;
+      settleLedger(b.season,b.week,bg.key,close,margin);
       graded.push({...bg,hs:f.home_score,as:f.away_score,margin,close,closeOu,openLine:opened,mechOutcome:out,clv,
         total:f.home_score+f.away_score,nH:u.nH,nA:u.nA,neutral:bg.neutral,modelLine:bg.line});
     });
@@ -159,6 +170,56 @@ function grade(){
   const clvs=all.filter(g=>g.clv!=null).map(g=>g.clv);
   console.log('graded '+added+' new game(s) | season model picks '+W+'-'+L2+' | avg CLV '+
     (clvs.length?(clvs.reduce((a,b)=>a+b,0)/clvs.length).toFixed(2):'--')+' | IC '+c.ic+' n='+c.nIc);
+}
+
+function settleLedger(season,week,key,close,margin){
+  const led=rd('ledger.json',null);if(!led)return;
+  let touched=false;
+  led.bets.forEach(x=>{
+    if(x.season!==season||x.week!==week||x.key!==key||x.result!=null)return;
+    // the bet stands at the number we took, not at the close
+    const taken=x.taken, side=x.side;
+    const hm=(side==='away')? taken : -taken;              // back to home-margin
+    const res = margin===hm ? 'P' : ((margin>hm)===(side==='home') ? 'W' : 'L');
+    x.close=close;
+    x.clv=A.clvOf(side,x.marketAtBet,close);
+    x.result=res;
+    x.pnl = res==='P' ? 0 : (res==='W' ? A.profitPerUnit(x.price)*100 : -100);
+    touched=true;
+  });
+  if(touched)wr('ledger.json',led);
+}
+
+// ---------- paper ledger ----------
+// Records what we would have taken, at the number and price that were actually on the screen.
+// Nothing is wagered. This is the evidence that decides whether any of this is worth real money.
+function ledger(){
+  const b=rd('board.json',null);if(!b)throw new Error('no board');
+  const reads=rd('reads.json',{});const led=rd('ledger.json',{bets:[]});
+  const have=new Set(led.bets.map(x=>x.season+'|'+x.week+'|'+x.key));
+  let added=0;
+  b.games.forEach(g=>{
+    const rd_=reads[g.key];if(!rd_)return;
+    if(/NO BET/i.test(rd_.recommendation||''))return;
+    if(g.stars<2)return;
+    if(g.market==null||Math.abs(g.market)<3)return;
+    if(g.quote&&g.quote.ev<=0)return;
+    if(g.worth===false)return;
+    if(have.has(b.season+'|'+b.week+'|'+g.key))return;
+    const side=/HOME/i.test(rd_.recommendation)?'home':'away';
+    const q=g.quote||{};
+    led.bets.push({season:b.season,week:b.week,key:g.key,away:g.away,home:g.home,side,
+      taken:q.shown!=null?q.shown:(side==='away'?g.market:-g.market),
+      price:q.price!=null?q.price:-110,book:q.book||null,
+      modelLine:g.line,marketAtBet:g.market,stars:g.stars,
+      ev:q.ev!=null?q.ev:null,walk:g.walk,confidence:rd_.confidence,
+      placedAt:new Date().toISOString(),close:null,clv:null,result:null,pnl:null});
+    added++;
+    console.log('  logged '+g.away+' at '+g.home+': '+side+' '+(q.shown!=null?q.shown:'')+' at '+(q.price||-110)+(q.book?' ('+q.book+')':''));
+  });
+  if(added)wr('ledger.json',led);
+  const open=led.bets.filter(x=>x.result==null).length;
+  console.log('ledger: '+added+' new, '+open+' open, '+led.bets.length+' all time');
 }
 
 // ---------- analyze (threshold games) ----------
@@ -198,5 +259,5 @@ async function analyze(){
 }
 
 (async()=>{const cmd=process.argv[2];const close=process.argv.includes('--close');
-  if(cmd==='init-ratings')initRatings();else if(cmd==='odds')await odds(close);else if(cmd==='board')board();else if(cmd==='grade')grade();else if(cmd==='analyze')await analyze();else{console.log('usage: init-ratings | odds [--close] | board | grade | analyze');process.exit(1);}
+  if(cmd==='init-ratings')initRatings();else if(cmd==='odds')await odds(close);else if(cmd==='board')board();else if(cmd==='grade')grade();else if(cmd==='analyze')await analyze();else if(cmd==='ledger')ledger();else{console.log('usage: init-ratings | odds [--close] | board | grade | analyze | ledger');process.exit(1);}
 })().catch(e=>{console.error(e);process.exit(1);});
