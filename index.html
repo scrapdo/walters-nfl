@@ -229,7 +229,7 @@ function head(){
     if(!rd){pending++;return;}
     if(/NO BET/i.test(rd.recommendation||""))return;
     wanted++;
-    if(infoBehind(g).ok)bets.push(g);
+    if(qualifies(g).ok)bets.push(g);
   });
   document.getElementById("wk").innerHTML="<b>Week "+b.week+"</b> &#183; "+b.season;
   var f=document.getElementById("fresh");
@@ -248,14 +248,16 @@ function head(){
       (leans.length?" The totals model also leans on "+leans.length+" game"+(leans.length>1?"s":"")+", though it has never beaten the closing total in testing.":"");
   }else if(flag.length){
     v=flag.length+" games sit far from the market.";
+    var qual=flag.filter(function(g){return qualifies(g).ok;}).length;
     s=(pending?"Reads are still pending on "+pending+" of them. ":"")+
-      (wanted?"The written read wanted to bet "+wanted+" of them, but none of the gaps trace to information \u2014 they come from the ratings, not from news, so the board holds. ":
-              "None of the gaps trace to information \u2014 they come from the ratings, not from news. ")+
-      "Disagreement is not edge until the signal reading turns positive.";
+      (qual?qual+(qual>1?" clear the size rule, two stars on a game priced outside a field goal, ":" clears the size rule, two stars on a game priced outside a field goal, ")+
+            (wanted?"but the written read is against "+(qual===1?"it":"them")+". ":"but the read has not backed "+(qual===1?"it":"them")+". ")
+           :"None of them clear the size rule, so the board holds. ")+
+      "The rest are gaps our ratings invented, which is the usual state.";
     if(leans.length)s+=" The totals model also leans on "+leans.length+" game"+(leans.length>1?"s":"")+", though it has never beaten the closing total in testing.";
   }else{
     v="Nothing worth a bet this week.";
-    s="No game is far enough from the market to flag. That is the normal state; the model is built to sit still."+
+    s="No game is far enough from the market to flag. That is the normal state, the model is built to sit still."+
       (leans.length?" The totals model leans on "+leans.length+" game"+(leans.length>1?"s":"")+", but it has never beaten the closing total in testing.":"");
   }
   document.getElementById("verdict").textContent=v;
@@ -320,22 +322,23 @@ function sideSpread(g,side){
   return {num:side==="away"?best.v:-best.v,book:best.b};
 }
 
-function infoBehind(g){
-  var inj=(g.hInj||0)+(g.aInj||0);
-  var c=(D.board&&D.board.calib)||{};
-  if(inj>=0.5)return {ok:true,why:"injury news worth "+inj.toFixed(1)+" pts"};
-  if(c.ic!=null&&c.ic>=0.15&&c.nIc>=60)return {ok:true,why:"our disagreements have been predicting results"};
-  return {ok:false,why:inj>0?"only "+inj.toFixed(1)+" pts of injury news behind it":"no injury or availability news behind the gap"};
+function qualifies(g){
+  // What survived eleven seasons: two stars or more, on a game the market prices at three points or more.
+  // Injury news behind the gap does NOT help. Those games went 51.1% against 54.7% for games without it,
+  // because the market prices injuries sharply. Injuries still sharpen our number, they just do not pick winners.
+  if(g.stars<2)return {ok:false,why:"the gap is under two stars"};
+  if(g.market==null||Math.abs(g.market)<3)return {ok:false,why:"the market prices this inside a field goal, where we have been worst"};
+  return {ok:true,why:"two stars, on a game priced outside a field goal"};
 }
 function callFor(g){
   var rd=D.reads&&D.reads[g.key];
   if(rd&&!/NO BET/i.test(rd.recommendation||"")){
     var side=/HOME/i.test(rd.recommendation)?"home":"away";
-    var team=side==="home"?g.home:g.away, best=sideSpread(g,side), info=infoBehind(g);
-    if(!info.ok)return {cls:"none",big:"No bet",
-      sub:"the read likes "+ab(team)+", but "+info.why};
+    var team=side==="home"?g.home:g.away, best=sideSpread(g,side), q=qualifies(g);
+    if(!q.ok)return {cls:"none",big:"No bet",
+      sub:"the read likes "+ab(team)+", but "+q.why};
     return {cls:"bet",big:"Take "+ab(team)+(best?" "+sp(best.num):""),
-      sub:(best&&best.book?"best price at "+best.book+", ":"")+"confidence "+rd.confidence+" of 5, "+info.why};
+      sub:(best&&best.book?"best price at "+best.book+", ":"")+"confidence "+rd.confidence+" of 5"};
   }
   if(rd)return {cls:"none",big:"No bet",
     sub:(g.hInj||g.aInj)?"the gap is not explained by the injuries":"nothing in the news behind the gap"};
@@ -555,10 +558,13 @@ function viewAbout(){
   "a closing total. It is shown for context and never as a bet.</p>"+
   "<p>What can be an edge is information \u2014 an injury or availability change the market has not priced yet. That is what the roster work and the evening "+
   "runs are for, and it is the one thing worth acting on quickly.</p>"+
-  "<p>So the board enforces that rule rather than trusting the write-up. A game is only called as a bet when there is something behind the gap: "+
-  "injury value on one of the two sides, or a signal reading that has earned trust over enough graded games. If the written read likes a side but nothing "+
-  "is behind the number, the call stays <b>no bet</b> and tells you what the read wanted. Early in a season this will hold almost everything back, "+
-  "which is correct \u2014 the ratings have just moved and are at their least reliable.</p>"+
+  "<p>That was the theory. Eleven seasons of testing said otherwise, so the board follows the evidence instead. Flagged games with injury news behind them "+
+  "went 51.1%. Flagged games with none went 54.7%. The market prices injury news sharply, so a gap that survives the news is usually us being wrong about a "+
+  "well-priced game. Injuries still earn their place in the line, they simply do not pick winners.</p>"+
+  "<p>What survived: <b>two stars or more, on a game the market prices at three points or more.</b> Inside a field goal we have been dreadful, 38% over "+
+  "eleven seasons, because the ladder through the three inflates trivial gaps. Under the rule: 54.9% across all eleven seasons, and 52.6% across the four "+
+  "seasons held back while the rule was being chosen, against a break-even of 52.4%. That held-back number is the honest one. It is about three games a "+
+  "week rather than eight, and the written read can still veto any of them.</p>"+
   "<h2 class='group'>Using it through the week</h2>"+
   "<dl>"+
     "<dt>Tuesday morning</dt><dd>The board rebuilds from scratch: schedule, depth charts, player values, opening prices. Skim the flagged group and note which gaps have a reason behind them.</dd>"+
