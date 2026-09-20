@@ -616,11 +616,35 @@ function loadWeekJson(){
   if(WEEKJSON)return Promise.resolve();
   return j("week.json").then(function(w){WEEKJSON=w||{rosters:{}};});
 }
-Promise.all([j("board.json"),j("reads.json"),j("history.json"),j("ratings.json"),j("calib.json")])
-.then(function(r){
-  D.board=r[0];D.reads=r[1]||{};D.history=r[2]||{weeks:[]};D.ratings=r[3];D.calib=r[4]||{};
-  render();
-});
+/* A tab left open all week used to sit on whatever it loaded. Now it refreshes itself:
+   on load, whenever you come back to the tab, and every five minutes while it is showing.
+   It also watches the page file itself, so a code change reaches an open tab without a manual reload. */
+var LAST_LOAD=0, CODE_HASH=null;
+function hashOf(t){var h=5381;for(var i=0;i<t.length;i++)h=((h<<5)+h+t.charCodeAt(i))|0;return h;}
+function loadData(){
+  return Promise.all([j("board.json"),j("reads.json"),j("history.json"),j("ratings.json"),j("calib.json")])
+  .then(function(r){
+    if(r[0])D.board=r[0];
+    D.reads=r[1]||{};D.history=r[2]||{weeks:[]};if(r[3])D.ratings=r[3];D.calib=r[4]||{};
+    LAST_LOAD=Date.now();render();
+  }).catch(function(){});
+}
+function checkCode(){
+  return fetch("index.html?v="+Date.now(),{cache:"no-store"}).then(function(r){return r.text();})
+    .then(function(t){var h=hashOf(t);
+      if(CODE_HASH===null){CODE_HASH=h;return;}
+      if(h!==CODE_HASH)location.reload();
+    }).catch(function(){});
+}
+function refresh(force){
+  if(!force&&Date.now()-LAST_LOAD<60000)return;
+  loadData();checkCode();
+}
+document.addEventListener("visibilitychange",function(){if(!document.hidden)refresh();});
+window.addEventListener("focus",function(){refresh();});
+setInterval(function(){if(!document.hidden)refresh(true);},5*60*1000);
+setInterval(function(){if(!document.hidden&&D.board)head();},60*1000);   // keep "built N ago" honest
+loadData();checkCode();
 </script>
 </body>
 </html>
