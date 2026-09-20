@@ -1,0 +1,2 @@
+data/*.json merge=ours
+data/boards/*.json merge=ours
