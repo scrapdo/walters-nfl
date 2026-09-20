@@ -174,6 +174,15 @@ def main():
              "home":ABBR.get(CODE.get(r.home_team,r.home_team)),"away":ABBR.get(CODE.get(r.away_team,r.away_team)),
              "home_score":int(r.home_score),"away_score":int(r.away_score)} for r in fin.itertuples()]
     json.dump(clean(finals),open(os.path.join(os.path.dirname(a.out),'finals.json'),'w'),allow_nan=False)
+    # the whole season, so nothing has to guess who plays whom
+    allg=games[(games.season==season)&(games.game_type=='REG')]
+    sched=[{"week":int(r.week),"gameday":r.gameday,"gametime":r.gametime,
+            "home":ABBR.get(CODE.get(r.home_team,r.home_team)),"away":ABBR.get(CODE.get(r.away_team,r.away_team)),
+            "neutral":str(r.location).lower()=="neutral",
+            "home_score":(None if pd.isna(r.home_score) else int(r.home_score)),
+            "away_score":(None if pd.isna(r.away_score) else int(r.away_score))} for r in allg.itertuples()]
+    json.dump(clean(sched),open(os.path.join(os.path.dirname(a.out),'schedule.json'),'w'),allow_nan=False)
+    print(f"  schedule.json: {len(sched)} games")
     print(f"  finals.json: {len(finals)} completed games this season")
     print(f"week {week} {season}: {len(gl)} games, {sum(len(v) for v in rosters.values())} roster spots, injuries: {inj_note}, players: {psrc}, teamstats: {ts_src}")
 
