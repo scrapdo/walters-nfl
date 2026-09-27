@@ -386,8 +386,13 @@ function gameRow(g){
 function injList(list,team){
   if(!list||!list.length)return "<div class='line'><span>Everyone available</span><span></span></div>";
   return list.map(function(d){
+    // A man behind healthy starters was not going to take snaps, so his absence
+    // costs nothing. Say so, otherwise a zero next to a name looks like a bug.
+    var why=d.played!=null&&d.played<0.1 ? ", behind healthy starters, not expected to play"
+          : (d.repl?", "+esc(d.repl)+" in":"");
     return "<div class='line'><span>"+esc(d.n)+" <span style='color:var(--muted)'>"+esc(d.p)+
-      (d.repl?", "+esc(d.repl)+" in":"")+"</span></span><span class='neg'>-"+d.loss.toFixed(2)+"</span></div>";
+      why+"</span></span><span class='"+(d.loss>=0.05?"neg":"")+"'>"+
+      (d.loss>=0.05?"-"+d.loss.toFixed(2):"0.00")+"</span></div>";
   }).join("");
 }
 function detail(g){
@@ -561,9 +566,12 @@ function viewAbout(){
   "<h2 class='group'>How the number is built</h2>"+
   "<p class='lede'>Every team carries a rating: how many points better than average it is on a neutral field. "+
   "A game's line is the home rating, plus home field, minus the away rating, minus what each side's injuries cost.</p>"+
-  "<p>Injuries are priced the way Billy Walters priced them. A hurt player costs his value <i>net of whoever replaces him</i>, "+
-  "not his whole value, and when several players in the same unit are out at once the loss compounds \u2014 two receivers hurt "+
-  "together cost more than the two of them apart.</p>"+
+  "<p>Injuries are priced the way Billy Walters priced them. A hurt player costs his value <i>net of whoever actually takes "+
+  "his snaps</i>, not his whole value. That cuts both ways. A third-string quarterback on the report costs nothing, because the "+
+  "starter still plays every snap and nothing about the lineup changes. A starting receiver costs the gap between him and the "+
+  "man who enters the lineup behind the whole group, not the gap to his direct backup. And when several players who were going "+
+  "to play in the same unit are out at once the loss compounds \u2014 two receivers hurt together cost more than the two of them "+
+  "apart. Two names buried on the depth chart are not a cluster injury and do not compound.</p>"+
   "<p>Then the market's number sits next to ours. The distance between them is scored by walking every margin in between and "+
   "adding up how often real games land on each one. Three and seven carry most of the weight; four and five carry almost none. "+
   "That total is the star rating on the right of each row.</p>"+
@@ -656,11 +664,27 @@ function loadWeekJson(){
    It also watches the page file itself, so a code change reaches an open tab without a manual reload. */
 var LAST_LOAD=0, CODE_HASH=null;
 function hashOf(t){var h=5381;for(var i=0;i<t.length;i++)h=((h<<5)+h+t.charCodeAt(i))|0;return h;}
+// A read argues from the line and market it was written against. Once either has
+// moved, its reasoning cites numbers that are no longer on the card, so drop it
+// rather than show a paragraph that contradicts the board.
+function freshReads(reads,board){
+  if(!board||!board.games)return reads;
+  var cur={};board.games.forEach(function(g){cur[g.key]=g;});
+  var out={};
+  Object.keys(reads).forEach(function(k){
+    var r=reads[k],g=cur[k];
+    if(!g){out[k]=r;return;}
+    var lineMoved=r.line!=null&&Math.abs(r.line-g.line)>=0.5;
+    var mktMoved=r.market!=null&&g.market!=null&&Math.abs(r.market-g.market)>=0.5;
+    if(!lineMoved&&!mktMoved)out[k]=r;
+  });
+  return out;
+}
 function loadData(){
   return Promise.all([j("board.json"),j("reads.json"),j("history.json"),j("ratings.json"),j("calib.json")])
   .then(function(r){
     if(r[0])D.board=r[0];
-    D.reads=r[1]||{};D.history=r[2]||{weeks:[]};if(r[3])D.ratings=r[3];D.calib=r[4]||{};
+    D.reads=freshReads(r[1]||{},D.board);D.history=r[2]||{weeks:[]};if(r[3])D.ratings=r[3];D.calib=r[4]||{};
     LAST_LOAD=Date.now();render();
   }).catch(function(){});
 }

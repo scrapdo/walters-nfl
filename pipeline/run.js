@@ -93,7 +93,7 @@ function board(){
     const ou0=A.calcModelTotal(week.teamstats[g.home],week.teamstats[g.away],hD,aD,{});
     const modelOu=ou0?parseFloat((ou0.total*(calib.on?calib.ouScalar:1)).toFixed(1)):null;
     const ouEdge=modelOu!=null&&mktOu!=null?parseFloat((modelOu-mktOu).toFixed(1)):null;
-    const inj=(dl,ros)=>dl.details.map(d=>({n:d.n,p:d.p,st:d.st,loss:d.loss,repl:d.repl,idx:(ros.find(x=>x.n===d.n)||{}).idx}));
+    const inj=(dl,ros)=>dl.details.map(d=>({n:d.n,p:d.p,st:d.st,loss:d.loss,repl:d.repl,played:d.played,idx:(ros.find(x=>x.n===d.n)||{}).idx}));
     const books=L.books||[];
     const quote=side?A.bestQuote(line,side,books):null;
     const price=quote?quote.price:-110;

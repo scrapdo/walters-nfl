@@ -169,6 +169,32 @@ const STACK_MULT={REC:1.5,DL:1.4,OL:1.4,DB:1.35,LB:1.35,RB:1.3,QB:1,ST:1};
 // measured against the healthy baseline (regulars average 87.8% of usual snaps even when fully healthy):
 //   Out 99.5% | Doubtful 98-99% (= OUT, not 75%) | Questionable: DNP 54%, Limited 30% (QB 52%, DB 36%), Full 15% | no designation + DNP 12%
 const Q_PCT={Q15:0.15,Q30:0.30,Q55:0.55};
+
+const STARTERS={QB:1,RB:1,FB:1,WR:3,TE:1,OT:2,G:2,C:1,OL:5,EDGE:2,DE:2,DT:2,NT:1,DL:4,LB:2,ILB:2,OLB:2,MLB:1,CB:3,S:2,FS:1,SS:1,DB:5,K:1,P:1,LS:1,ST:3};
+
+function availOf(st){return st==="OUT"?0:1-(Q_PCT[st]||0);}
+
+// Expected value of the players actually on the field at one position, and each
+// player's probability of being one of them. A body only carries weight to the
+// extent the depth chart ahead of him is expected to be unavailable, so a third
+// stringer behind healthy players counts for nothing and his absence costs nothing.
+function onFieldValue(players,k,avail){
+  const out={total:0,w:{}};
+  if(!(k>0)||!players.length)return out;
+  const ord=players.slice().sort((a,b)=>(a.d||99)-(b.d||99));
+  let dist=[1];
+  ord.forEach(pl=>{
+    const p=avail(pl);
+    let room=0;for(let j=0;j<k&&j<dist.length;j++)room+=dist[j];
+    const w=p*room;
+    out.w[pl.n]=(out.w[pl.n]||0)+w;
+    out.total+=w*(pl.ev!=null?pl.ev:pl.v);
+    const nd=new Array(dist.length+1).fill(0);
+    for(let j=0;j<dist.length;j++){nd[j]+=dist[j]*(1-p);nd[j+1]+=dist[j]*p;}
+    dist=nd;
+  });
+  return out;
+}
 const INJ_CALIB={"Out":"99.5% (n=5517)","Doubtful":"98-99% -> OUT (n=1104)","Q + DNP":"54% (n=1565)","Q + Limited":"30%; QB 52%, DB 36% (n=6200)","Q + Full":"15% (n=1731)","No tag + DNP":"12% (n=1921)"};
 
 // -- O/U MODEL (matchup-average totals) --
@@ -212,29 +238,43 @@ async function fetchTeamStatsAPI(away,home){
 // qbMult scales QB-position losses (book-literal 1.0; market behaves closer to 2.0 -- Results calibrates it)
 function calcInjuryDelta(roster,statuses,qbMult){
   const qm=qbMult||1;
+  const byPos={};
+  roster.forEach(pl=>{(byPos[pl.p]=byPos[pl.p]||[]).push(pl);});
   const groups={},details=[];let qbRaw=0;
-  roster.forEach(pl=>{
-    const st=statuses[pl.n]||"IN";
-    if(st==="IN")return;
-    let loss,repl=null;const val=x=>(x.ev!=null?x.ev:x.v);
-    if(st==="OUT"){
-      const r=roster.filter(x=>x.p===pl.p&&x.n!==pl.n&&(statuses[x.n]||"IN")!=="OUT"&&x.d>pl.d).sort((a,b)=>a.d-b.d)[0];
-      const rv=r?val(r)*(1-(Q_PCT[statuses[r.n]]||0)):0;
-      loss=Math.max(0,val(pl)-rv);repl=r?r.n:null;
-    }else{
-      const r=roster.filter(x=>x.p===pl.p&&x.n!==pl.n&&(statuses[x.n]||"IN")!=="OUT"&&x.d>pl.d).sort((a,b)=>a.d-b.d)[0];
-      const rv=r?val(r)*(1-(Q_PCT[statuses[r.n]]||0)):0;
-      loss=(Q_PCT[st]||0)*Math.max(0,val(pl)-rv);repl=r?r.n:null;
-    }
-    if(pl.p==="QB"){qbRaw+=loss;loss=loss*qm;}
-    details.push({n:pl.n,p:pl.p,st,loss:parseFloat(loss.toFixed(2)),repl});
-    const g=POS_GROUP[pl.p]||"OTHER";
-    (groups[g]=groups[g]||[]).push(loss);
+  Object.keys(byPos).forEach(pos=>{
+    const players=byPos[pos];
+    const k=STARTERS[pos]!=null?STARTERS[pos]:1;
+    const hurt=players.filter(pl=>(statuses[pl.n]||"IN")!=="IN").sort((a,b)=>(a.d||99)-(b.d||99));
+    if(!hurt.length)return;
+    const base=onFieldValue(players,k,function(){return 1;});
+    const all=onFieldValue(players,k,function(x){return statuses[x.n]?availOf(statuses[x.n]):1;});
+    // What this position actually costs, counting every injury at once.
+    const posLoss=Math.max(0,base.total-all.total);
+    // Charge each player his damage taken alone, then scale the set to the real
+    // position cost so the parts always add up to the whole.
+    const solo=hurt.map(function(pl){
+      const one=onFieldValue(players,k,function(x){return x.n===pl.n?availOf(statuses[pl.n]):1;});
+      let repl=null,gain=0;
+      players.forEach(x=>{if(x.n===pl.n)return;const g=(one.w[x.n]||0)-(base.w[x.n]||0);if(g>gain){gain=g;repl=x.n;}});
+      return {pl:pl,cost:Math.max(0,base.total-one.total),repl:repl};
+    });
+    const soloSum=solo.reduce((a,b)=>a+b.cost,0);
+    const share=soloSum>0?posLoss/soloSum:0;
+    solo.forEach(function(s){
+      let loss=s.cost*share;
+      if(s.pl.p==="QB"){qbRaw+=loss;loss=loss*qm;}
+      details.push({n:s.pl.n,p:s.pl.p,st:statuses[s.pl.n],loss:parseFloat(loss.toFixed(2)),repl:s.repl,played:parseFloat((base.w[s.pl.n]||0).toFixed(2))});
+      const g=POS_GROUP[s.pl.p]||"OTHER";
+      (groups[g]=groups[g]||[]).push(loss);
+    });
   });
   let total=0;const stacked=[];
   Object.entries(groups).forEach(([g,losses])=>{
     const sum=losses.reduce((a,b)=>a+b,0);
-    const mult=losses.length>=2?(STACK_MULT[g]||1.3):1;
+    // A cluster needs two players who were actually going to play. Two names on the
+    // report who sit behind healthy starters are not a cluster injury.
+    const real=losses.filter(x=>x>=0.05).length;
+    const mult=real>=2?(STACK_MULT[g]||1.3):1;
     if(mult>1&&sum>0)stacked.push(g);
     total+=sum*mult;
   });
